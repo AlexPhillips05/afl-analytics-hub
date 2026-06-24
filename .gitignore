@@ -46,3 +46,11 @@ env/
 Thumbs.db
 .vscode/
 *.swp
+
+# ========================
+# Data & Secrets
+# ========================
+*.csv
+*.db
+*.sqlite
+.env.*
