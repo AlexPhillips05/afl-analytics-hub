@@ -6,6 +6,7 @@ suppressPackageStartupMessages({
   library(fitzRoy)
   library(dplyr)
   library(readr)
+  library(ggplot2)
 })
 
 cat("Fetching AFL Data using fitzRoy...\n")
@@ -56,36 +57,79 @@ player_details <- fetch_player_details(
 )
 write_csv(player_details, "data_pipeline/sample_player_details.csv")
 
+# 8. Fetch Coaches Votes (2025)
+#NOTE: calculate_coaches_vote_possibilities() returns all possible breakdowns of coaches votes between two coaches, given said votes.
+cat("8. Fetching Coaches Votes (2025)...\n")
+coaches_votes <- fetch_coaches_votes(2025, comp = "AFLM")
+write_csv(coaches_votes, "data_pipeline/sample_coaches_votes.csv")
+
+# 9. Fetch ScoreWorm Data and make plots (2025, Round 1 (OR), Hawks vs Sydney)
+score_worm_data <- fetch_score_worm_data("CD_M20250140002")
+write_csv(score_worm_data, "data_pipeline/sample_score_worm_data.csv")
+score_worm_plot <- plot_score_worm("CD_M20250140002")
+ggsave(
+  filename = "data_pipeline/score_worm.png",
+  plot = score_worm_plot,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+score_worm_plot_totals <- plot_score_worm_totals("CD_M20250140002")
+ggsave(
+  filename = "data_pipeline/score_worm_totals.png",
+  plot = score_worm_plot_totals,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
+# All of the below methods use footywire as the source, which now blocks non-browser requests via ModSecurity/Cloudflare, 
+# preventing automated scraping with rvest/fitzRoy. These methods are commented out for now.
+# I could maybe write a customer scraper myself if I decide I really need this data but for now I will ignore it.
+
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+# x. Fetch Out-of-Contract Players (2026)
 # NOTE: fetch_out_of_contract_players_footywire also can be used
-fetch_outofcontract()
+# cat("x. Fetching Out-of-Contract Players (2026)...\n")
+# outofcontract_players <- fetch_outofcontract(2026)
+# write_csv(outofcontract_players, "data_pipeline/sample_outofcontract_players.csv")
 
-fetch_awards()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+# x. Fetch All-Australian Squad and Team (2025)
+# cat("x. Fetching All-Australian Squad and Team (2025)...\n")
+# allaustralian_squad <- fetch_awards_allaustralian(2025, type = "squad")
+# write_csv(allaustralian_squad, "data_pipeline/sample_allaustralian_squad.csv")
+# allaustralian_team <- fetch_awards_allaustralian(2025, type = "team")
+# write_csv(allaustralian_team, "data_pipeline/sample_allaustralian_team.csv")
 
-fetch_awards_allaustrlian()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_awards_brownlow()
 
-fetch_awards_brownlow()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_rising_star()
 
-fetch_betting_odds_footywire()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_betting_odds_footywire()
 
-fetch_coaches_votes()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_fantasy_scores()
 
-calculate_coaches_vote_possibilities()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_supercoach_scores()
 
-fetch_fantasy_scores()
+# FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
+#fetch_scores()
 
-fetch_supercoach_scores()
+# Still to check all below
+#fetch_squiggle_data()
 
-fetch_scores()
+#get_afl_colour_palettes()
 
-fetch_score_worm_data()
+#plot_score_worm()
 
-fetch_squiggle_data()
+#plot_score_worm_totals()
 
-get_afl_colour_palettes()
-
-plot_score_worm()
-
-plot_score_worm_totals()
+#fetch_player_stats_fryzigg()
 
 #TODO: Explore other functions at https://github.com/jimmyday12/fitzRoy/tree/main/R
 #TODO: Explore Squiggle and Fryzigg later too!!
