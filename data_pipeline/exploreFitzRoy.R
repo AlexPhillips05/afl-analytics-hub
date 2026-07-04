@@ -64,6 +64,7 @@ coaches_votes <- fetch_coaches_votes(2025, comp = "AFLM")
 write_csv(coaches_votes, "data_pipeline/sample_coaches_votes.csv")
 
 # 9. Fetch ScoreWorm Data and make plots (2025, Round 1 (OR), Hawks vs Sydney)
+cat("9. Fetching ScoreWorm Data and making plots (Hawks vs Sydney, OR 2025)...\n")
 score_worm_data <- fetch_score_worm_data("CD_M20250140002")
 write_csv(score_worm_data, "data_pipeline/sample_score_worm_data.csv")
 score_worm_plot <- plot_score_worm("CD_M20250140002")
@@ -82,6 +83,39 @@ ggsave(
   height = 6,
   dpi = 300
 )
+
+cat("10. Fetching AFL Colour Palettes...\n")
+colour_palettes <- fitzRoy:::get_afl_colour_palettes()
+write_csv(colour_palettes, "data_pipeline/sample_colour_palettes.csv")
+
+#These methods fetch data usingthe Squigle API, I will more fully explore all its options and params in exploreSquiggle.py
+squiggle_teams <- fetch_squiggle_data("teams")
+write_csv(squiggle_teams, "data_pipeline/sample_squiggle_teams.csv")
+
+squiggle_sources <- fetch_squiggle_data("sources")
+write_csv(squiggle_sources, "data_pipeline/sample_squiggle_sources.csv")
+
+squiggle_games <- fetch_squiggle_data("games", year = 2026, round = 1)
+write_csv(squiggle_games, "data_pipeline/sample_squiggle_games.csv")
+
+squiggle_tips <- fetch_squiggle_data("tips", year = 2026, round = 1)
+write_csv(squiggle_tips, "data_pipeline/sample_squiggle_tips.csv")
+
+squiggle_ladder <- fetch_squiggle_data("ladder", year = 2026, round = 1)
+write_csv(squiggle_ladder, "data_pipeline/sample_squiggle_ladder.csv")
+
+squiggle_standings <- fetch_squiggle_data("standings", year = 2026, round = 1)
+write_csv(squiggle_standings, "data_pipeline/sample_squiggle_standings.csv")
+
+# A modelled or reconstructed competition ladder based on Squiggle’s prediction engine
+# Can use for model validation maybe?
+squiggle_virtual <- fetch_squiggle_data("virtual", year = 2026)
+write_csv(squiggle_virtual, "data_pipeline/sample_squiggle_virtual.csv")
+
+# Gets data from HPN Footy’s Player Approximate Value model (VERY USEFUL)
+squiggle_pav <- fetch_squiggle_data("pav", year = 2026)
+write_csv(squiggle_pav, "data_pipeline/sample_squiggle_pav.csv")
+
 
 # All of the below methods use footywire as the source, which now blocks non-browser requests via ModSecurity/Cloudflare, 
 # preventing automated scraping with rvest/fitzRoy. These methods are commented out for now.
@@ -121,14 +155,6 @@ ggsave(
 #fetch_scores()
 
 # Still to check all below
-#fetch_squiggle_data()
-
-#get_afl_colour_palettes()
-
-#plot_score_worm()
-
-#plot_score_worm_totals()
-
 #fetch_player_stats_fryzigg()
 
 #TODO: Explore other functions at https://github.com/jimmyday12/fitzRoy/tree/main/R
