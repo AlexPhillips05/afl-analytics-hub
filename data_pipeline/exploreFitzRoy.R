@@ -84,11 +84,14 @@ ggsave(
   dpi = 300
 )
 
+#10. Fetch AFL Colour Palettes
 cat("10. Fetching AFL Colour Palettes...\n")
 colour_palettes <- fitzRoy:::get_afl_colour_palettes()
 write_csv(colour_palettes, "data_pipeline/sample_colour_palettes.csv")
 
+#11. Fetch Squiggle Data
 #These methods fetch data usingthe Squigle API, I will more fully explore all its options and params in exploreSquiggle.py
+cat("11. Fetching Squiggle Data...\n")
 squiggle_teams <- fetch_squiggle_data("teams")
 write_csv(squiggle_teams, "data_pipeline/sample_squiggle_teams.csv")
 
@@ -116,6 +119,14 @@ write_csv(squiggle_virtual, "data_pipeline/sample_squiggle_virtual.csv")
 squiggle_pav <- fetch_squiggle_data("pav", year = 2026)
 write_csv(squiggle_pav, "data_pipeline/sample_squiggle_pav.csv")
 
+# Fetch Fryzigg Data
+# Very advanced and extensive player stats data
+cat("12. Fetching Fryzigg Data...\n")
+fryzigg_data <- fetch_player_stats_fryzigg(2025)
+write_csv(fryzigg_data, "data_pipeline/sample_fryzigg_data_2025.csv")
+# Doesnt update weekly so cant be used inseason, but will ve very good for training model
+fryzigg_data_2026 <- fetch_player_stats_fryzigg(2026)
+write_csv(fryzigg_data_2026, "data_pipeline/sample_fryzigg_data_2026.csv")
 
 # All of the below methods use footywire as the source, which now blocks non-browser requests via ModSecurity/Cloudflare, 
 # preventing automated scraping with rvest/fitzRoy. These methods are commented out for now.
@@ -153,11 +164,5 @@ write_csv(squiggle_pav, "data_pipeline/sample_squiggle_pav.csv")
 
 # FootyWire now blocks non-browser requests via ModSecurity/Cloudflare, preventing automated scraping with rvest/fitzRoy?
 #fetch_scores()
-
-# Still to check all below
-#fetch_player_stats_fryzigg()
-
-#TODO: Explore other functions at https://github.com/jimmyday12/fitzRoy/tree/main/R
-#TODO: Explore Squiggle and Fryzigg later too!!
 
 cat("Done! Check the data_pipeline folder for your CSV files.\n")
