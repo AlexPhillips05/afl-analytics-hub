@@ -229,15 +229,20 @@ FINALS_K = 34.0  # fixed, not part of the decay curve
 
 ### Scoring Shots Adjustment — Tier-0
 ```python
-adjusted_score = 0.65 * (scoring_shots * league_avg_conversion) + 0.35 * actual_score
-# league_avg_conversion: computed from this project's own historical results pull
-# (data_pipeline), recalculated at calibration time — NOT hardcoded from a published figure.
-# Fallback placeholder 0.50 only until first computed.
+expected_points_per_shot = league_avg_conversion * 6 + (1 - league_avg_conversion) * 1
+adjusted_score = 0.65 * (scoring_shots * expected_points_per_shot) + 0.35 * actual_score
+# league_avg_conversion: fraction of scoring shots that are goals, computed from this
+# project's own historical results pull (data_pipeline), recalculated at calibration
+# time — NOT hardcoded from a published figure. Fallback placeholder 0.50 until first computed.
 # scoring_shots = goals + behinds
 ```
 **Rationale for 65/35 (vs. an even split or heavier scoring-shot weighting):** conversion (set-shot
 accuracy) has a real skill component — it isn't purely random variance — so actual score deserves
 meaningful weight, not just a quarter.
+
+**Unit note:** `league_avg_conversion` is a goal-conversion *fraction* (~0.5), not a points value, so
+it's converted to `expected_points_per_shot` (goal=6, behind=1) before blending with `actual_score` —
+both terms must be in points for the blend weights to mean what they say.
 
 ### MoV Dampening + Autocorrelation Correction — Tier-0
 ```python
