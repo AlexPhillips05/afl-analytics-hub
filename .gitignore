@@ -55,3 +55,8 @@ Thumbs.db
 *.sqlite
 .env.*
 *.png
+
+# ========================
+# Miscellaneous Files/Docs
+# ========================
+docs/superpowers/specs/2026-07-11-elo-engine-differentiation-design.md

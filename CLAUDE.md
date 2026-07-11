@@ -28,7 +28,7 @@ This file provides full project context for Claude Code. Read this before making
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js (TypeScript, Tailwind CSS, App Router) |
+| Frontend | React with Next.js (TypeScript, Tailwind CSS, App Router) |
 | Frontend ORM | Drizzle ORM + postgres.js |
 | Backend API | Python FastAPI + uvicorn |
 | ML / Data Pipeline | Python (scikit-learn, XGBoost, pandas, numpy) |
@@ -185,12 +185,18 @@ Two-layer architecture:
 **Layer 1 — Elo Engine** (`data_pipeline/elo/elo_engine.py`)
 - Single Elo rating per team (split offensive/defensive later)
 - Starting rating: 1500
-- Season carryover: 65% of deviation from 1500 carries over; 35% reverts to mean
-- Variable K-factor: higher early in season, lower late season
-- Venue-specific HGA (not flat) — Venue Performance Values (VPVs) per team per venue
-- Margin of victory multiplier with diminishing returns + autocorrelation correction
+- Season carryover: 72% of deviation from 1500 carries over; 28% reverts to mean — *(Tier-0 placeholder; see rationale below)*
+- Variable K-factor via continuous decay curve, not stepwise bands — see K-Factor Schedule
+- Venue-specific HGA (not flat) — **Venue Adjustment Index (VAI)** per team per venue
+- Margin of victory multiplier with diminishing returns + autocorrelation correction — see MoV Dampening
 - Scoring shots weighted more than final score (accuracy is partially random)
 - Exclude: Essendon 2016 (doping), COVID-affected 2020 rounds from parameter optimisation
+
+> **Note on Tier-0 constants:** every numeric constant in this section is an independently-reasoned
+> starting value, not an empirically fitted one. Each is tagged **Tier-0** with its own rationale.
+> Real calibration against historical data happens on `feature/elo-optimisation`. See
+> `docs/superpowers/specs/2026-07-11-elo-engine-differentiation-design.md` for the full reasoning
+> and how these differ from the source models studied (below in Prior Art & Differentiation).
 
 **Layer 2 — XGBoost Regression** (not yet started)
 - Inputs: Elo differential, venue HGA, days rest differential, rolling EWMA stats
@@ -198,35 +204,70 @@ Two-layer architecture:
 - Win probability derived via calibrated sigmoid — not modelled separately
 - Temporal cross-validation only (never shuffle — must train on past, predict future)
 
-### K-Factor Schedule
+### Season Carryover — Tier-0
 ```python
-Finals:        36.0
-Rounds 1-6:    40.0   # High — Elo needs to react fast early
-Rounds 7-13:   32.0
-Rounds 14-20:  28.0
-Rounds 21+:    24.0   # Late season — ratings are settled
+carryover = 0.72   # 72% of deviation from 1500 carries into next season
+reversion = 0.28   # 28% reverts to mean
 ```
+**Rationale:** AFL list turnover between seasons is comparatively low, multi-year player contracts
+and a trade/draft period that typically reshapes only a minority of any club's senior list each
+off-season so a higher-than-generic carryover fraction is defensible on its own terms.
 
-### Scoring Shots Adjustment
+### K-Factor Schedule — Tier-0 (continuous decay, not stepwise bands)
 ```python
-adjusted_score = 0.75 * (scoring_shots * league_avg_conversion) + 0.25 * actual_score
-# league_avg_conversion ≈ 0.53 historically (tunable parameter)
+def k_factor(round_number: int) -> float:
+    K_EARLY, K_LATE, TAU = 38.0, 22.0, 7.0
+    return K_LATE + (K_EARLY - K_LATE) * exp(-round_number / TAU)
+
+FINALS_K = 34.0  # fixed, not part of the decay curve
+```
+- `K_EARLY = 38`: round-1 reactivity — off-season roster/coaching uncertainty is high
+- `K_LATE = 22`: settled, late-season value — ratings have converged
+- `TAU = 7`: decay constant — curve reaches ~`K_LATE` by round 20-21
+- `FINALS_K = 34`: finals sample size per team is tiny (1-4 games), so we don't want round-1-level
+  reactivity, but stakes/intensity justify more than the fully-settled late-season value
+
+### Scoring Shots Adjustment — Tier-0
+```python
+adjusted_score = 0.65 * (scoring_shots * league_avg_conversion) + 0.35 * actual_score
+# league_avg_conversion: computed from this project's own historical results pull
+# (data_pipeline), recalculated at calibration time — NOT hardcoded from a published figure.
+# Fallback placeholder 0.50 only until first computed.
 # scoring_shots = goals + behinds
 ```
+**Rationale for 65/35 (vs. an even split or heavier scoring-shot weighting):** conversion (set-shot
+accuracy) has a real skill component — it isn't purely random variance — so actual score deserves
+meaningful weight, not just a quarter.
 
-### Rest Feature
+### MoV Dampening + Autocorrelation Correction — Tier-0
+```python
+mov_multiplier = ln(1 + margin_points / S) / (1 + K * abs(elo_diff_pre_game))
+S = 6      # AFL goal value — scales margin in "goals-equivalent" units
+K = 0.0012 # autocorrelation correction strength
+```
+Diminishing returns on margin size, plus a correction so an "expected" blowout (large pre-game Elo
+gap) moves ratings less than an upset margin of the same size. Deliberately not the well-known
+FiveThirtyEight NFL Elo shape (`ln(|MOV|+1) * 2.2/(elo_diff*0.001+2.2)`) — same principle, different
+scaling basis and constants, derived independently for AFL.
+
+### Rest Feature — Tier-0
 ```python
 # Do NOT treat rest linearly
-# Any break > 9 days = is_off_bye = True (binary flag)
+# Any break > 10 days = is_off_bye = True (binary flag)
 # Not "extra rest" — teams often come out sluggish after a bye
 rest_diff = home_days_rest - away_days_rest  # both capped at 9 days
 ```
+**Rationale for >10 (not >9):** ordinary AFL round-to-round gaps already vary between 4 and 8 days
+depending on Thursday/Friday/Sunday scheduling. A >9-day cutoff risks catching normal weekend-to-weekend
+gaps that aren't bye-affected; >10 days more cleanly isolates genuine bye-round gaps (typically 13+
+days). The separate 9-day cap on `rest_diff` is unchanged — it limits outlier influence on the
+differential feature, a different concern from identifying bye rounds.
 
 ### Features for Layer 2 (EWMA, 5-game half-life, home minus away differential)
 | Feature | Source |
 |---|---|
 | Elo differential | Computed |
-| Venue HGA (VPV) | Computed |
+| Venue HGA (VAI) | Computed |
 | Days rest differential (capped) | fetch_fixture() |
 | is_off_bye (home), is_off_bye (away) | fetch_fixture() |
 | Rolling scoring margin | fetch_results() |
@@ -285,15 +326,20 @@ rest_diff = home_days_rest - away_days_rest  # both capped at 9 days
 
 ---
 
-## References & Community Models Studied
+## Prior Art & Differentiation
 
-| Model | Key Insight Used |
-|---|---|
-| MatterOfStats (MoSHBODS) | Separate offensive/defensive ratings; scoring shots > final score; VPVs; variable k; 6-year window |
-| Waynealytics | Two-layer Elo + XGBoost architecture; exclude bookmaker odds; venue-specific HGA |
-| The Footycast | Pure Elo with Occam's Razor philosophy; margin → probability via calibrated sigmoid |
-| Betfair Data Scientists | EWM rolling averages; head-to-head form; efficiency features; feature differential approach |
-| Betfair Brownlow Tutorial | Brownlow as ranking problem, not regression |
+Ideas below were studied to learn the domain. Each row states the concept taken and specifically how
+this project's implementation differs — different constants (independently reasoned, not copied),
+different naming, or a different formula shape. Full reasoning in
+`docs/superpowers/specs/2026-07-11-elo-engine-differentiation-design.md`.
+
+| Model | Concept Studied | How This Project Differs |
+|---|---|---|
+| MatterOfStats (MoSHBODS) | Separate offensive/defensive ratings; scoring shots > final score; VPVs; variable k; 6-year window | Renamed VPV → Venue Adjustment Index (VAI); own scoring-shot blend (65/35 vs. their split) and a computed-not-hardcoded conversion constant; K-factor is a continuous decay curve, not a variable-k lookup |
+| Waynealytics | Two-layer Elo + XGBoost architecture; exclude bookmaker odds; venue-specific HGA | Same two-layer shape (standard, not source-specific) and same exclusion of odds; venue HGA renamed and computed independently |
+| The Footycast | Pure Elo with Occam's Razor philosophy; margin → probability via calibrated sigmoid | Retained the sigmoid-calibration approach for win probability; MoV dampening formula built independently rather than adapted from any single source |
+| Betfair Data Scientists | EWM rolling averages; head-to-head form; efficiency features; feature differential approach | Rolling-feature technique kept (EWMA differentials are a standard approach), specific features/half-life chosen for this project's Layer 2 |
+| Betfair Brownlow Tutorial | Brownlow as ranking problem, not regression | Framing adopted; not yet designed in detail (future model) |
 
 ---
 
