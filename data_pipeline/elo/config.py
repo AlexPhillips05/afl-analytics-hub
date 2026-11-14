@@ -45,3 +45,8 @@ class EloConfig:
     mov_scale: float = 6.0       # AFL goal value — scales margin into goals-equivalent units
     mov_correction: float = 0.0012  # autocorrelation correction strength
     mov_floor: float = 0.5       # ≈ the log term for a ~4pt margin; a draw is weighted like a near-draw
+
+    # Soft match outcome: actual_home = 1 / (1 + exp(-adjusted_margin / outcome_scale)).
+    # Replaces a hard win/draw/loss so a 0.1pt adjusted win and a 0.1pt adjusted loss
+    # move ratings almost identically.
+    outcome_scale: float = 6.0  # one goal: a 6pt adjusted margin ≈ 0.73 of a win, 18pt ≈ 0.95

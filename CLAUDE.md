@@ -218,8 +218,9 @@ Two-layer architecture:
 - Venue-specific HGA (not flat) — **Venue Adjustment Index (VAI)** per team per venue
 - Margin of victory multiplier with diminishing returns + autocorrelation correction — see MoV Dampening
 - Scoring shots weighted more than final score (accuracy is partially random)
-- **Match outcome (W/L/D) for rating updates is judged on the adjusted margin, not the scoreboard.** This is deliberate: the rating
-  estimates underlying strength, so a team that wins the scoreboard with clearly worse scoring shots is rated as outplayed
+- **Match outcome for rating updates is judged on the adjusted margin (not the scoreboard), and is continuous.** It isn't a
+  hard win/draw/loss. See Soft Match Outcome below. The scoreboard's influence is set by one dial only, `actual_score_weight` in
+  the scoring-shot blend. Don't add a separate scoreboard-based W/L rule
 - Input must be in chronological order. The engine doesn't sort, but it raises on out-of-order seasons or dates
 - Exclude: Essendon 2016 (doping), COVID-affected 2020 rounds from *parameter optimisation* only. The engine still
   processes those matches, because other teams' ratings depend on them
@@ -276,6 +277,18 @@ meaningful weight, not just a quarter.
 **Unit note:** `league_avg_conversion` is a goal-conversion *fraction* (~0.5), not a points value, so
 it's converted to `expected_points_per_shot` (goal=6, behind=1) before blending with `actual_score` —
 both terms must be in points for the blend weights to mean what they say.
+
+### Soft Match Outcome — Tier-0
+```python
+actual_home = 1 / (1 + exp(-adjusted_margin / outcome_scale))   # replaces hard 1 / 0.5 / 0
+outcome_scale = 6.0   # one goal: ±6pt adjusted margin ≈ 0.73/0.27, ±18pt ≈ 0.95/0.05
+rating_change = K * mov_multiplier * (actual_home - expected_home)
+```
+**Rationale:** with a hard win/loss, two near-identical close games either side of zero swing ratings in
+opposite directions (about ±16 points). A logistic outcome makes close games, where scoreboard and scoring
+shots most often disagree, move ratings only slightly. Example: 12.2 (74) d. 9.14 (68) has adjusted margin
+−18.4, which gives an outcome of ≈0.04, so it's rated a clear loss for the scoreboard winner (9 fewer scoring shots).
+**To check once real data is loaded:** how often the scoreboard winner and the adjusted-margin winner disagree.
 
 ### MoV Dampening + Autocorrelation Correction — Tier-0
 ```python
