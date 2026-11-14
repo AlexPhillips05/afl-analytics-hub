@@ -40,6 +40,12 @@ def season_metrics(history: pd.DataFrame) -> pd.DataFrame:
         bits=[match_bits(p, h, a) for p, h, a in
               zip(history["expected_home_win_prob"], history["home_score"], history["away_score"])],
         home_baseline=history["home_score"] >= history["away_score"],
+        # Home result as 1 / 0.5 / 0 minus predicted p: > 0 means home teams are underrated.
+        home_residual=(
+            (history["home_score"] > history["away_score"]).astype(float)
+            + 0.5 * (history["home_score"] == history["away_score"])
+            - history["expected_home_win_prob"]
+        ),
         abs_change=history["rating_change"].abs(),
     )
     per_season = df.groupby("season").agg(
@@ -49,6 +55,7 @@ def season_metrics(history: pd.DataFrame) -> pd.DataFrame:
         bits_per_game=("bits", "mean"),
         home_baseline_accuracy=("home_baseline", "mean"),
         mean_abs_rating_change=("abs_change", "mean"),
+        home_bias=("home_residual", "mean"),
     )
     end = end_of_season_ratings(history).groupby("season")["rating"]
     per_season["end_rating_sd"] = end.std()

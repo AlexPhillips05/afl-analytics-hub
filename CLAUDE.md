@@ -23,9 +23,10 @@ This file provides full project context for Claude Code. Read this before making
   - **Core engine complete (all 6 plan tasks, 26 tests).** It has only been tested on synthetic fixtures; it isn't wired to real data yet
   - The plan was revised on 2026-11-14 to fix design flaws before implementation (see the plan's revision note)
   - Progress ledger: `.superpowers/sdd/progress.md`
-  - Historical run (2000–2026, AFL Tables) working: `python data_pipeline/run_elo_history.py`. 2010–2026 averages are
-    68.0% tipping (vs 57.4% always-home) and +0.150 bits/game, with Tier-0 constants and no HGA
-  - Next for Elo: `feature/elo-venue-hga`, then `feature/elo-optimisation` (tune against these metrics)
+  - Historical run (2000–2026, AFL Tables) working: `python data_pipeline/run_elo_history.py` (compares VAI off/on)
+  - Venue Adjustment Index done. 2010–2026 averages: tipping 68.0% → 69.6%, bits/game 0.150 → 0.172,
+    home bias +0.073 → +0.010 (Tier-0 constants)
+  - Next for Elo: `feature/elo-optimisation` (tune Tier-0 constants against these metrics)
 - No database schema created yet. This is the next major task after the Elo engine
 
 ---
@@ -81,7 +82,9 @@ afl-analytics-hub/
 │   │   ├── mov.py              # margin-of-victory multiplier (winner-side dampening, floor)
 │   │   ├── engine.py           # EloEngine: chronological rating updates, season carryover
 │   │   ├── adapters.py         # AFL Tables DataFrame -> list[MatchResult] (Opening Round, Wildcard handling)
-│   │   └── evaluation.py       # tipping accuracy, bits, per-season metrics
+│   │   ├── evaluation.py       # tipping accuracy, bits, per-season metrics
+│   │   ├── venues.py           # team/venue home-state tables (AFL Tables names)
+│   │   └── vai.py              # Venue Adjustment Index: base value + learned per team-venue tweak
 │   └── tests/elo/              # pytest suite for the Elo engine
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
@@ -305,6 +308,19 @@ opposite directions (about ±16 points). A logistic outcome makes close games, w
 shots most often disagree, move ratings only slightly. Example: 12.2 (74) d. 9.14 (68) has adjusted margin
 −18.4, which gives an outcome of ≈0.04, so it's rated a clear loss for the scoreboard winner (9 fewer scoring shots).
 **To check once real data is loaded:** how often the scoreboard winner and the adjusted-margin winner disagree.
+
+### Venue Adjustment Index (VAI) — Tier-0
+```python
+VAI(team, venue) = base + tweak(team, venue)
+base  = home_label_bonus (20) if listed home team
+      + home_state_bonus (45) if venue is in the team's home state   # elo/venues.py tables
+tweak += 0.10 * rating_change after each match (home +, away −); tweaks × 0.9 between seasons
+effective_diff = (R_home + VAI_home) − (R_away + VAI_away)   # used for win prob and MoV dampening
+```
+**Rationale:** from this project's 2000–2026 data, same-state home teams win 53.2% (≈ +22 Elo, the label effect) and
+interstate home teams win 59.6% (≈ +67 Elo). Most team–venue pairs are sparse (median 11 games), so the learned
+tweak is small and the base value carries rarely seen pairs. Unknown venue (`None`) → no VAI. Unknown venue or
+team *name* → `ValueError`: add new grounds and teams to `elo/venues.py` (e.g. Tasmania from 2028).
 
 ### MoV Dampening + Autocorrelation Correction — Tier-0
 ```python
