@@ -81,3 +81,12 @@ def test_season_metrics():
     assert m.loc[2020, "mean_abs_rating_change"] == pytest.approx(12.0)
     assert m.loc[2020, "end_rating_range"] == pytest.approx(1520.0 - 1484.0)
     assert m.loc[2020, "note"] == "COVID"
+
+
+def test_season_metrics_home_bias():
+    m = season_metrics(_history()).set_index("season")
+
+    # 2009: (1 - 0.5) + (1 - 0.4) -> mean 0.55
+    assert m.loc[2009, "home_bias"] == pytest.approx(0.55)
+    # 2020: (0 - 0.5) + (0.5 - 0.45) -> mean -0.225
+    assert m.loc[2020, "home_bias"] == pytest.approx(-0.225)

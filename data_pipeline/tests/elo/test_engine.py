@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date
 
 import pytest
@@ -177,3 +178,66 @@ def test_no_carryover_within_the_same_season():
     rating_before_match_2 = result.iloc[1]["home_rating_pre"]
     # No regression applied between two matches in the same season.
     assert rating_before_match_2 == pytest.approx(rating_after_match_1)
+
+
+def _venue_match(season, round_number, home, away, venue, hg=15, hb=10, ag=8, ab=6):
+    return MatchResult(
+        season=season, round_number=round_number, is_final=False,
+        home_team=home, away_team=away,
+        home_goals=hg, home_behinds=hb, away_goals=ag, away_behinds=ab,
+        venue=venue,
+    )
+
+
+def test_interstate_home_ground_gives_home_team_the_venue_advantage():
+    engine = EloEngine()
+
+    row = engine.process_matches([_venue_match(2024, 1, "West Coast", "Collingwood", "Perth Stadium")]).iloc[0]
+
+    assert row["home_vai"] == pytest.approx(65.0)
+    assert row["away_vai"] == pytest.approx(0.0)
+    assert row["expected_home_win_prob"] == pytest.approx(0.5924662305843318)  # 1 / (1 + 10 ** (-65 / 400))
+
+
+def test_unknown_venue_means_no_venue_adjustment():
+    row = EloEngine().process_matches([_match(2024, 1, "Home", "Away", 15, 10, 8, 6)]).iloc[0]
+
+    assert row["home_vai"] == 0.0
+    assert row["away_vai"] == 0.0
+    assert row["expected_home_win_prob"] == pytest.approx(0.5)
+
+
+def test_home_tweak_moves_by_learning_rate_times_rating_change():
+    engine = EloEngine()
+
+    row = engine.process_matches([_venue_match(2024, 1, "West Coast", "Collingwood", "Perth Stadium")]).iloc[0]
+
+    expected_tweak = 0.10 * row["rating_change"]
+    assert engine.vai.tweaks[("West Coast", "Perth Stadium")] == pytest.approx(expected_tweak)
+    assert engine.vai.tweaks[("Collingwood", "Perth Stadium")] == pytest.approx(-expected_tweak)
+
+
+def test_venue_tweaks_regress_at_season_boundary():
+    engine = EloEngine()
+    engine.process_matches([_venue_match(2024, 1, "West Coast", "Collingwood", "Perth Stadium")])
+    tweak_end_2024 = engine.vai.tweaks[("West Coast", "Perth Stadium")]
+
+    # A 2025 match at a different venue triggers the season boundary without touching this pair.
+    engine.process_matches([_venue_match(2025, 1, "Sydney", "GWS", "S.C.G.")])
+
+    assert engine.vai.tweaks[("West Coast", "Perth Stadium")] == pytest.approx(0.9 * tweak_end_2024)
+
+
+def test_zeroed_vai_constants_reproduce_the_no_venue_engine():
+    off = EloConfig(home_label_bonus=0.0, home_state_bonus=0.0, vai_learning_rate=0.0, vai_carryover=0.0)
+    with_venue = [
+        _venue_match(2024, 1, "West Coast", "Collingwood", "Perth Stadium"),
+        _venue_match(2025, 1, "Collingwood", "West Coast", "M.C.G.", 9, 8, 12, 7),
+    ]
+    without_venue = [dataclasses.replace(m, venue=None) for m in with_venue]
+
+    a = EloEngine(off).process_matches(with_venue)
+    b = EloEngine().process_matches(without_venue)
+
+    for col in ["expected_home_win_prob", "rating_change", "home_rating_post", "away_rating_post"]:
+        assert list(a[col]) == pytest.approx(list(b[col]))

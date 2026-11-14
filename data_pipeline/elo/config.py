@@ -50,3 +50,13 @@ class EloConfig:
     # Replaces a hard win/draw/loss so a 0.1pt adjusted win and a 0.1pt adjusted loss
     # move ratings almost identically.
     outcome_scale: float = 6.0  # one goal: a 6pt adjusted margin ≈ 0.73 of a win, 18pt ≈ 0.95
+
+    # Venue Adjustment Index (VAI): per-team, per-venue rating adjustment.
+    # VAI = base + learned tweak, where base = home_label_bonus (if listed home team)
+    #                                         + home_state_bonus (if venue is in the team's home state).
+    # Both bonuses come from this project's own 2000-2026 home win rates. Setting all four
+    # constants to 0 turns VAI off (identical to the pre-VAI engine).
+    home_label_bonus: float = 20.0   # same-state home win rate 53.2% ≈ +22 Elo
+    home_state_bonus: float = 45.0   # interstate home win rate 59.6% ≈ +67 Elo, minus the label bonus
+    vai_learning_rate: float = 0.10  # tweak moves by this fraction of each match's rating change
+    vai_carryover: float = 0.9       # fraction of each tweak kept between seasons
