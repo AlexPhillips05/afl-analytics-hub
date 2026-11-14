@@ -23,7 +23,9 @@ This file provides full project context for Claude Code. Read this before making
   - **Core engine complete (all 6 plan tasks, 26 tests).** It has only been tested on synthetic fixtures; it isn't wired to real data yet
   - The plan was revised on 2026-11-14 to fix design flaws before implementation (see the plan's revision note)
   - Progress ledger: `.superpowers/sdd/progress.md`
-  - Next for Elo: an ingestion adapter (real results → `MatchResult`), then `feature/elo-venue-hga` and `feature/elo-optimisation`
+  - Historical run (2000–2026, AFL Tables) working: `python data_pipeline/run_elo_history.py`. 2010–2026 averages are
+    68.0% tipping (vs 57.4% always-home) and +0.150 bits/game, with Tier-0 constants and no HGA
+  - Next for Elo: `feature/elo-venue-hga`, then `feature/elo-optimisation` (tune against these metrics)
 - No database schema created yet. This is the next major task after the Elo engine
 
 ---
@@ -65,6 +67,9 @@ afl-analytics-hub/
 │   ├── .lintr.R                # Linter configuration for R scripts
 │   ├── exploreFitzRoy.R        # R script exploring fitzRoy data endpoints (writes sample_*.csv)
 │   ├── exploreSquiggle.py      # Empty placeholder: Squiggle exploration is paused
+│   ├── fetch_results.R         # R: AFL Tables results 2000–present -> data/afltables_results.csv
+│   ├── run_elo_history.py      # Runs EloEngine over all results, prints sanity-check report
+│   ├── data/                   # Local data files (gitignored): raw results, elo_history.csv
 │   ├── pyproject.toml          # pytest config (pythonpath=".", testpaths="tests")
 │   ├── requirements.R          # R package dependencies installer script
 │   ├── requirements.txt        # Python data processing & modeling dependencies (incl. pytest)
@@ -74,7 +79,9 @@ afl-analytics-hub/
 │   │   ├── k_factor.py         # continuous K decay + fixed finals K
 │   │   ├── scoring.py          # conversion rate, scoring-shot/actual-score blend
 │   │   ├── mov.py              # margin-of-victory multiplier (winner-side dampening, floor)
-│   │   └── engine.py           # EloEngine: chronological rating updates, season carryover
+│   │   ├── engine.py           # EloEngine: chronological rating updates, season carryover
+│   │   ├── adapters.py         # AFL Tables DataFrame -> list[MatchResult] (Opening Round, Wildcard handling)
+│   │   └── evaluation.py       # tipping accuracy, bits, per-season metrics
 │   └── tests/elo/              # pytest suite for the Elo engine
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
@@ -107,7 +114,6 @@ afl-analytics-hub/
 
 ### Known housekeeping (open items)
 - `.gitignore` excludes `docs/superpowers/*`, so the Elo spec and plan referenced throughout this file are **not version-controlled**. Consider removing that ignore line
-- No `dev` branch exists yet, and the current branch is named `elo-engine-core` (no `feature/` prefix). See Git Branching Strategy
 - `README.md` is only a title
 
 ---
@@ -133,6 +139,14 @@ R packages are system-wide (not in a venv). R package dependencies are documente
 cd ~/PersonalProjects/afl-analytics-hub/data_pipeline
 source venv/bin/activate
 pytest            # config in pyproject.toml; tests live in tests/
+```
+
+### Running the Elo historical run
+```bash
+cd ~/PersonalProjects/afl-analytics-hub
+Rscript data_pipeline/fetch_results.R          # refresh raw results (network, ~1 min)
+source data_pipeline/venv/bin/activate
+python data_pipeline/run_elo_history.py        # report + data_pipeline/data/elo_history.csv
 ```
 
 ---
@@ -181,28 +195,26 @@ These are commented out in `exploreFitzRoy.R` with explanation.
 
 ## Git Branching Strategy
 
+Solo project, so there's no `dev` integration branch: feature branches come off `main` and merge back into `main`.
+
 ```
-main        — always deployable, merge from dev when milestone is stable
-└── dev     — primary integration branch
-    ├── feature/db-schema-matches
-    ├── feature/elo-engine-core          ← CURRENT WORK (actual branch name: elo-engine-core)
-    ├── feature/elo-venue-hga
-    ├── feature/elo-optimisation
-    ├── feature/rolling-features
-    ├── feature/xgboost-model
-    └── ...
+main        — always working; merge a feature branch in once its tests pass
+├── elo-engine-core                  ✅ merged (core Elo engine)
+├── elo-historical-run               ← CURRENT: real results → MatchResult adapter, full 2000–present run
+├── feature/db-schema-matches
+├── feature/elo-venue-hga
+├── feature/elo-optimisation
+├── feature/rolling-features
+├── feature/xgboost-model
+└── ...
 ```
 
 ### Rules
-- Never commit directly to `main` or `dev`
+- Never commit directly to `main`
 - Branch naming: `feature/`, `fix/`, `chore/`
 - Each branch = one discrete unit of work (1-3 days max)
-- Always branch off `dev`, merge back to `dev`
-- Merge `dev` → `main` only when a full milestone is working and tested
+- Branch off `main`, merge back to `main` when the work is tested
 - **The developer stages and commits manually.** Don't `git add` or `git commit` unless asked
-
-> **Actual state vs. strategy:** `dev` hasn't been created yet. Early exploration commits went to `main`,
-> and `elo-engine-core` was branched from `main`. Create `dev` from `main` before merging the Elo work.
 
 ---
 
