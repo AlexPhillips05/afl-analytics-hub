@@ -8,6 +8,7 @@ from elo.k_factor import k_factor
 from elo.models import MatchResult
 from elo.mov import mov_multiplier
 from elo.scoring import adjusted_score, conversion_rate
+from elo.vai import VenueAdjustment
 
 
 class EloEngine:
@@ -23,6 +24,7 @@ class EloEngine:
         self._prior_shots = 0
         self._season_goals = 0
         self._season_shots = 0
+        self.vai = VenueAdjustment(self.config)
 
     def get_rating(self, team: str) -> float:
         return self.ratings.get(team, self.config.initial_rating)
@@ -45,6 +47,7 @@ class EloEngine:
         for team, rating in list(self.ratings.items()):
             deviation = rating - self.config.initial_rating
             self.ratings[team] = self.config.initial_rating + self.config.carryover * deviation
+        self.vai.start_new_season()
 
     def process_matches(self, matches: Sequence[MatchResult]) -> pd.DataFrame:
         rows = []
@@ -62,7 +65,13 @@ class EloEngine:
 
             home_rating = self.get_rating(match.home_team)
             away_rating = self.get_rating(match.away_team)
-            elo_diff = home_rating - away_rating
+            # Venue Adjustment Index: unknown venue => no home advantage (and no tweak update).
+            if match.venue is None:
+                home_vai = away_vai = 0.0
+            else:
+                home_vai = self.vai.value(match.home_team, match.venue, is_home=True)
+                away_vai = self.vai.value(match.away_team, match.venue, is_home=False)
+            elo_diff = (home_rating + home_vai) - (away_rating + away_vai)
             expected_home = 1 / (1 + 10 ** (-elo_diff / 400))
 
             conversion = self.league_avg_conversion
@@ -90,6 +99,8 @@ class EloEngine:
             new_away_rating = away_rating - rating_change
             self.ratings[match.home_team] = new_home_rating
             self.ratings[match.away_team] = new_away_rating
+            if match.venue is not None:
+                self.vai.update(match.home_team, match.away_team, match.venue, rating_change)
 
             # Counted only after this match is rated, and only feeds the conversion rate
             # once the season is complete.
@@ -105,6 +116,8 @@ class EloEngine:
                 "away_team": match.away_team,
                 "home_rating_pre": home_rating,
                 "away_rating_pre": away_rating,
+                "home_vai": home_vai,
+                "away_vai": away_vai,
                 "home_rating_post": new_home_rating,
                 "away_rating_post": new_away_rating,
                 "expected_home_win_prob": expected_home,
