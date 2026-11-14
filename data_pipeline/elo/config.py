@@ -30,13 +30,18 @@ class EloConfig:
     # accuracy is partially random and shouldn't fully drive rating changes.
     scoring_shot_weight: float = 0.65
     actual_score_weight: float = 0.35
-    league_avg_conversion: float | None = None  # None => computed from the matches passed to the engine
-    fallback_conversion: float = 0.50  # used only if league_avg_conversion is None and no matches are given
+    # None => the engine uses the conversion rate of all *prior completed seasons* it has
+    # processed (never the current or future seasons — no leakage). Set a float to pin it.
+    league_avg_conversion: float | None = None
+    fallback_conversion: float = 0.50  # used until the engine has a completed prior season
 
     # MoV dampening + autocorrelation correction:
-    # mov_multiplier = ln(1 + margin / mov_scale) / (1 + mov_correction * abs(elo_diff))
-    # Diminishing returns on margin size, and a correction so an "expected"
-    # blowout (large pre-game rating gap) moves ratings less than an upset
-    # margin of the same size.
+    # mov_multiplier = (ln(1 + |margin| / mov_scale) + mov_floor)
+    #                  / (1 + mov_correction * max(0, winner_elo_diff))
+    # Diminishing returns on margin size. The correction only dampens wins by the
+    # pre-game favourite (positive winner_elo_diff), so an "expected" blowout moves
+    # ratings less than an upset of the same size. mov_floor keeps draws and
+    # very narrow results from producing a zero multiplier.
     mov_scale: float = 6.0       # AFL goal value — scales margin into goals-equivalent units
     mov_correction: float = 0.0012  # autocorrelation correction strength
+    mov_floor: float = 0.5       # ≈ the log term for a ~4pt margin; a draw is weighted like a near-draw

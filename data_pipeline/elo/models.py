@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+from datetime import date as Date
 
 
 @dataclass(frozen=True)
 class MatchResult:
     season: int
-    round_number: int
+    round_number: int  # 0 = Opening Round (2024+); finals flagged via is_final, not a round number
     is_final: bool
     home_team: str
     away_team: str
@@ -12,6 +13,14 @@ class MatchResult:
     home_behinds: int
     away_goals: int
     away_behinds: int
+
+    # Optional now so synthetic test fixtures stay short; ingestion should always populate them.
+    # date: used by EloEngine to reject out-of-order input (leakage guard) and later for rest/bye.
+    # venue: needed by the Venue Adjustment Index (feature/elo-venue-hga).
+    # match_id: stable key for joining back to the database.
+    match_id: str | None = None
+    date: Date | None = None
+    venue: str | None = None
 
     @property
     def home_score(self) -> int:
