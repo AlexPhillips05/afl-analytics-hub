@@ -107,7 +107,6 @@ afl-analytics-hub/
 
 ### Known housekeeping (open items)
 - `.gitignore` excludes `docs/superpowers/*`, so the Elo spec and plan referenced throughout this file are **not version-controlled**. Consider removing that ignore line
-- No `dev` branch exists yet, and the current branch is named `elo-engine-core` (no `feature/` prefix). See Git Branching Strategy
 - `README.md` is only a title
 
 ---
@@ -181,28 +180,26 @@ These are commented out in `exploreFitzRoy.R` with explanation.
 
 ## Git Branching Strategy
 
+Solo project, so there's no `dev` integration branch: feature branches come off `main` and merge back into `main`.
+
 ```
-main        — always deployable, merge from dev when milestone is stable
-└── dev     — primary integration branch
-    ├── feature/db-schema-matches
-    ├── feature/elo-engine-core          ← CURRENT WORK (actual branch name: elo-engine-core)
-    ├── feature/elo-venue-hga
-    ├── feature/elo-optimisation
-    ├── feature/rolling-features
-    ├── feature/xgboost-model
-    └── ...
+main        — always working; merge a feature branch in once its tests pass
+├── elo-engine-core                  ✅ merged (core Elo engine)
+├── elo-historical-run               ← CURRENT: real results → MatchResult adapter, full 2000–present run
+├── feature/db-schema-matches
+├── feature/elo-venue-hga
+├── feature/elo-optimisation
+├── feature/rolling-features
+├── feature/xgboost-model
+└── ...
 ```
 
 ### Rules
-- Never commit directly to `main` or `dev`
+- Never commit directly to `main`
 - Branch naming: `feature/`, `fix/`, `chore/`
 - Each branch = one discrete unit of work (1-3 days max)
-- Always branch off `dev`, merge back to `dev`
-- Merge `dev` → `main` only when a full milestone is working and tested
+- Branch off `main`, merge back to `main` when the work is tested
 - **The developer stages and commits manually.** Don't `git add` or `git commit` unless asked
-
-> **Actual state vs. strategy:** `dev` hasn't been created yet. Early exploration commits went to `main`,
-> and `elo-engine-core` was branched from `main`. Create `dev` from `main` before merging the Elo work.
 
 ---
 
