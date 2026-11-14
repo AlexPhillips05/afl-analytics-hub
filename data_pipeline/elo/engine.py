@@ -40,7 +40,11 @@ class EloEngine:
         self._prior_shots += self._season_shots
         self._season_goals = 0
         self._season_shots = 0
-        # Season carryover (rating regression) is added in Task 6.
+        # Season carryover: keep `carryover` of each team's deviation from the mean,
+        # regress the rest — applied before the new season's first pre-game rating is read.
+        for team, rating in list(self.ratings.items()):
+            deviation = rating - self.config.initial_rating
+            self.ratings[team] = self.config.initial_rating + self.config.carryover * deviation
 
     def process_matches(self, matches: Sequence[MatchResult]) -> pd.DataFrame:
         rows = []

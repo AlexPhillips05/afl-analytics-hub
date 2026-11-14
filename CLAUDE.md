@@ -20,9 +20,10 @@ This file provides full project context for Claude Code. Read this before making
 - Project scaffold complete. `frontend/` is still the default create-next-app page; `backend/` has no code yet
 - R exploration script written and tested (`data_pipeline/exploreFitzRoy.R`). It writes `sample_*.csv` files (gitignored)
 - Elo engine: design spec and 6-task implementation plan written (see `docs/superpowers/`)
-  - Task 1 done: `MatchResult` and `EloConfig` models plus pytest wiring
-  - Tasks 2–6 pending: K-factor, scoring shots, MoV, engine, carryover. The plan was revised on 2026-11-14 to fix design flaws (see the plan's revision note)
+  - **Core engine complete (all 6 plan tasks, 26 tests).** It has only been tested on synthetic fixtures; it isn't wired to real data yet
+  - The plan was revised on 2026-11-14 to fix design flaws before implementation (see the plan's revision note)
   - Progress ledger: `.superpowers/sdd/progress.md`
+  - Next for Elo: an ingestion adapter (real results → `MatchResult`), then `feature/elo-venue-hga` and `feature/elo-optimisation`
 - No database schema created yet. This is the next major task after the Elo engine
 
 ---
@@ -70,7 +71,10 @@ afl-analytics-hub/
 │   ├── elo/                    # Layer 1 Elo engine package
 │   │   ├── models.py           # MatchResult dataclass
 │   │   ├── config.py           # EloConfig: all Tier-0 constants
-│   │   └── (planned) k_factor.py, scoring.py, mov.py, engine.py
+│   │   ├── k_factor.py         # continuous K decay + fixed finals K
+│   │   ├── scoring.py          # conversion rate, scoring-shot/actual-score blend
+│   │   ├── mov.py              # margin-of-victory multiplier (winner-side dampening, floor)
+│   │   └── engine.py           # EloEngine: chronological rating updates, season carryover
 │   └── tests/elo/              # pytest suite for the Elo engine
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)

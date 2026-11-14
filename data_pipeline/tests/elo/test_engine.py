@@ -124,3 +124,56 @@ def test_out_of_order_seasons_are_rejected():
 
     with pytest.raises(ValueError):
         engine.process_matches([_match(2024, 1, "A", "B", 10, 5, 8, 6)])
+
+
+def test_season_carryover_regresses_rating_toward_mean_between_seasons():
+    engine = EloEngine()
+    # Two 2024 matches so "Home" finishes above 1500 heading into 2025.
+    matches_2024 = [
+        MatchResult(
+            season=2024, round_number=1, is_final=False,
+            home_team="Home", away_team="Away",
+            home_goals=15, home_behinds=10, away_goals=8, away_behinds=6,
+        ),
+        MatchResult(
+            season=2024, round_number=2, is_final=False,
+            home_team="Home", away_team="Away",
+            home_goals=15, home_behinds=10, away_goals=8, away_behinds=6,
+        ),
+    ]
+    engine.process_matches(matches_2024)
+    rating_end_of_2024 = engine.get_rating("Home")
+    assert rating_end_of_2024 > 1500.0  # sanity check: Home should be above the mean by now
+
+    # First 2025 match — carryover must apply before this match's pre-game rating is read.
+    match_2025 = MatchResult(
+        season=2025, round_number=1, is_final=False,
+        home_team="Home", away_team="Third",
+        home_goals=10, home_behinds=5, away_goals=10, away_behinds=5,
+    )
+    result = engine.process_matches([match_2025])
+
+    expected_pre_rating = 1500.0 + 0.72 * (rating_end_of_2024 - 1500.0)
+    assert result.iloc[0]["home_rating_pre"] == pytest.approx(expected_pre_rating)
+
+
+def test_no_carryover_within_the_same_season():
+    engine = EloEngine()
+    matches = [
+        MatchResult(
+            season=2024, round_number=1, is_final=False,
+            home_team="Home", away_team="Away",
+            home_goals=15, home_behinds=10, away_goals=8, away_behinds=6,
+        ),
+        MatchResult(
+            season=2024, round_number=2, is_final=False,
+            home_team="Home", away_team="Third",
+            home_goals=10, home_behinds=5, away_goals=10, away_behinds=5,
+        ),
+    ]
+    result = engine.process_matches(matches)
+
+    rating_after_match_1 = result.iloc[0]["home_rating_post"]
+    rating_before_match_2 = result.iloc[1]["home_rating_pre"]
+    # No regression applied between two matches in the same season.
+    assert rating_before_match_2 == pytest.approx(rating_after_match_1)
