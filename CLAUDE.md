@@ -24,9 +24,10 @@ This file provides full project context for Claude Code. Read this before making
   - The plan was revised on 2026-11-14 to fix design flaws before implementation (see the plan's revision note)
   - Progress ledger: `.superpowers/sdd/progress.md`
   - Historical run (2000–2026, AFL Tables) working: `python data_pipeline/run_elo_history.py` (compares VAI off/on)
-  - Venue Adjustment Index done. 2010–2026 averages: tipping 68.0% → 69.6%, bits/game 0.150 → 0.172,
-    home bias +0.073 → +0.010 (Tier-0 constants)
-  - Next for Elo: `feature/elo-optimisation` (tune Tier-0 constants against these metrics)
+  - Venue Adjustment Index done (tipping 68.0% → 69.6%, bits/game 0.150 → 0.172 with Tier-0 constants)
+  - Constants tuned (`elo/tuned.py`, `TUNED_CONFIG`; tuner: `python data_pipeline/tune_elo.py`). Honest 2022–2026
+    holdout: bits/game 0.1713 → 0.1805, tipping 69.1% → 70.3%. `EloConfig()` defaults remain the Tier-0 baseline
+  - Elo Layer 1 is complete. Next: `feature/db-schema-matches`, then Layer 2 (`feature/rolling-features`)
 - No database schema created yet. This is the next major task after the Elo engine
 
 ---
@@ -70,6 +71,7 @@ afl-analytics-hub/
 │   ├── exploreSquiggle.py      # Empty placeholder: Squiggle exploration is paused
 │   ├── fetch_results.R         # R: AFL Tables results 2000–present -> data/afltables_results.csv
 │   ├── run_elo_history.py      # Runs EloEngine over all results, prints sanity-check report
+│   ├── tune_elo.py             # Two-stage constant tuning (Stage A holdout gate, Stage B refit)
 │   ├── data/                   # Local data files (gitignored): raw results, elo_history.csv
 │   ├── pyproject.toml          # pytest config (pythonpath=".", testpaths="tests")
 │   ├── requirements.R          # R package dependencies installer script
@@ -84,7 +86,10 @@ afl-analytics-hub/
 │   │   ├── adapters.py         # AFL Tables DataFrame -> list[MatchResult] (Opening Round, Wildcard handling)
 │   │   ├── evaluation.py       # tipping accuracy, bits, per-season metrics
 │   │   ├── venues.py           # team/venue home-state tables (AFL Tables names)
-│   │   └── vai.py              # Venue Adjustment Index: base value + learned per team-venue tweak
+│   │   ├── vai.py              # Venue Adjustment Index: base value + learned per team-venue tweak
+│   │   ├── history.py          # build_history: engine run + scoreboard scores
+│   │   ├── tuning.py           # grids, scoring rules, coordinate search
+│   │   └── tuned.py            # TUNED_CONFIG (Tier-1 values) + provenance
 │   └── tests/elo/              # pytest suite for the Elo engine
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
@@ -203,10 +208,10 @@ Solo project, so there's no `dev` integration branch: feature branches come off 
 ```
 main        — always working; merge a feature branch in once its tests pass
 ├── elo-engine-core                  ✅ merged (core Elo engine)
-├── elo-historical-run               ← CURRENT: real results → MatchResult adapter, full 2000–present run
+├── elo-historical-run               ✅ merged (AFL Tables adapter, historical run)
+├── elo-venue-hga                    ✅ merged (Venue Adjustment Index)
+├── elo-optimisation                 ← CURRENT: two-stage constant tuning
 ├── feature/db-schema-matches
-├── feature/elo-venue-hga
-├── feature/elo-optimisation
 ├── feature/rolling-features
 ├── feature/xgboost-model
 └── ...
@@ -255,6 +260,32 @@ Two-layer architecture:
 - Target: `home_margin` (regression)
 - Win probability derived via calibrated sigmoid — not modelled separately
 - Temporal cross-validation only (never shuffle — must train on past, predict future)
+
+### Tuned values (Tier-1) — `elo/tuned.py`
+Tuned 2026-11-18 by `tune_elo.py` (coordinate search on bits/game). Stage A: 2010–2021, holdout 2022–2026
+bits 0.1713 → 0.1805. Stage B (these values): 2010–2026; no setting drifted from Stage A. Use `TUNED_CONFIG` for real
+predictions; the Tier-0 sections below document the reasoned baseline (`EloConfig()` defaults).
+
+| Setting | Tier-0 | Tuned | Sensitivity (bits range) |
+|---|---|---|---|
+| outcome_scale | 6 | **18** | 0.053 (largest) |
+| k_late | 22 | **26** | 0.017 |
+| tau | 7 | **2** | 0.013 |
+| k_early | 38 | **88** | 0.007 |
+| carryover | 0.72 | **0.80** | 0.006 |
+| mov_scale | 6 | **4.5** | 0.005 |
+| mov_correction | 0.0012 | **0** (off) | 0.005 |
+| scoring_shot_weight | 0.65 | **0.80** | 0.003 |
+| home_state_bonus | 45 | **55** | 0.003 |
+| vai_learning_rate | 0.10 | **0.075** | 0.003 |
+| vai_carryover | 0.9 | **1.0** (no fade) | 0.001 |
+| mov_floor | 0.5 | unchanged | 0.003 |
+| home_label_bonus | 20 | unchanged | 0.002 |
+| finals_k | 34 | unchanged | < 0.001 |
+
+**Reading it:** the data prefers softer outcomes (`outcome_scale` 18) with a big early-season K that decays fast
+(`k_early` 88, `tau` 2): ratings re-sort hard in the first rounds, then settle. The winner-side autocorrelation
+correction adds nothing on bits (`mov_correction` → 0), and scoring shots deserve even more weight (80/20).
 
 ### Season Carryover — Tier-0
 ```python
@@ -335,9 +366,10 @@ gap) moves ratings less than an upset margin of the same size. Only favourite wi
 clamp keeps the denominator at 1 or more. The floor means a favourite held to a draw still loses rating.
 (Revised 2026-11-14: the earlier `abs(elo_diff)` version dampened upsets too, and gave draws zero weight.)
 
-**Calibration note:** with these values the multiplier is about 2–3 for typical margins, so a 41-point
-adjusted win between equal teams moves ratings by about 46 points. Effective K is probably too high.
-Revisit on `feature/elo-optimisation`, for example by normalising the multiplier so its historical mean is about 1. Deliberately not the well-known
+**Calibration note:** resolved on `elo-optimisation`. Tuning set `mov_correction` to 0 and softened outcomes instead
+(see Tuned values above).
+
+Deliberately not the well-known
 FiveThirtyEight NFL Elo shape (`ln(|MOV|+1) * 2.2/(elo_diff*0.001+2.2)`) — same principle, different
 scaling basis and constants, derived independently for AFL.
 
@@ -414,6 +446,9 @@ differential feature, a different concern from identifying bye rounds.
 4. **No data leakage** — all EWMA features use `.shift(1)` / computed strictly from prior games
 5. **Schema first** — always design the database schema before writing ingestion scripts
 6. **Temporal CV only** — never shuffle data when cross-validating; always train on past, predict future
+7. **Holdout, then refit** — Development (tuning, feature and model selection) uses 2010–2021 only, with temporal
+   CV inside it. 2022–2026 is scored once to give the honest performance estimate and to decide adoption. Models are
+   then refit on all seasons for live use; the next unseen season is the real test
 
 ---
 

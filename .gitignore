@@ -55,6 +55,7 @@ Thumbs.db
 *.sqlite
 .env.*
 *.png
+data_pipeline/data/
 
 # ========================
 # Miscellaneous Files/Docs
