@@ -27,8 +27,9 @@ This file provides full project context for Claude Code. Read this before making
   - Venue Adjustment Index done (tipping 68.0% → 69.6%, bits/game 0.150 → 0.172 with Tier-0 constants)
   - Constants tuned (`elo/tuned.py`, `TUNED_CONFIG`; tuner: `python data_pipeline/tune_elo.py`). Honest 2022–2026
     holdout: bits/game 0.1713 → 0.1805, tipping 69.1% → 70.3%. `EloConfig()` defaults remain the Tier-0 baseline
-  - Elo Layer 1 is complete. Next: `feature/db-schema-matches`, then Layer 2 (`feature/rolling-features`)
-- No database schema created yet. This is the next major task after the Elo engine
+  - Elo Layer 1 is complete
+- Database live (Prisma schema in `database/`): teams, venues, raw AFL Tables results, clean matches, Elo runs/ratings.
+  The pipeline reads and writes PostgreSQL; the CSVs are retired. Next: Layer 2 (`feature/rolling-features`)
 
 ---
 
@@ -37,11 +38,11 @@ This file provides full project context for Claude Code. Read this before making
 | Layer | Technology |
 |---|---|
 | Frontend | React with Next.js (TypeScript, Tailwind CSS, App Router) |
-| Frontend ORM | Drizzle ORM + postgres.js |
+| Schema & ORM | Prisma 7 (schema + migrations in `database/`; Prisma Client for the frontend later) |
 | Backend API | Python FastAPI + uvicorn |
 | ML / Data Pipeline | Python (scikit-learn, XGBoost, pandas, numpy) |
 | Data Extraction | R + fitzRoy package |
-| Database | PostgreSQL (native WSL2 Ubuntu install) |
+| Database | PostgreSQL 16 (native WSL2 Ubuntu install); R writes via DBI/RPostgres, Python via psycopg2 |
 | Environment | WSL2 Ubuntu 24.04, VS Code |
 
 ### Key Package Versions
@@ -49,8 +50,8 @@ This file provides full project context for Claude Code. Read this before making
 - Python: system Python3 (WSL2 Ubuntu)
 - R: 4.3.3 ("Angel Food Cake")
 - fitzRoy: latest (installed via R console)
-- drizzle-orm + postgres: installed in frontend/
-- drizzle-kit: installed as dev dependency in frontend/
+- Prisma: 7.10.1 (exact pin, in database/)
+- Node: 24.x
 
 ---
 
@@ -61,18 +62,28 @@ afl-analytics-hub/
 ├── .gitignore                  # Main ignore file (covers venv/, .env, node_modules/, etc.)
 ├── README.md                   # Main project introduction
 ├── CLAUDE.md                   # Overall project development description, references & commands
+├── .gitattributes              # Keeps Prisma migration files LF (core.autocrlf)
 │
 ├── backend/                    # FastAPI — serves predictions as JSON
 │   └── requirements.txt        # Backend python dependencies
+│
+├── database/                   # Prisma: schema owner (Node package)
+│   ├── package.json            # prisma 7.10.1; scripts migrate:dev / migrate:deploy / migrate:deploy:test / studio
+│   ├── prisma.config.ts        # reads ../data_pipeline/.env; PRISMA_TARGET=test → TEST_DATABASE_URL
+│   └── prisma/
+│       ├── schema.prisma       # models mapped to snake_case tables
+│       └── migrations/         # generated SQL migrations (committed)
 │
 ├── data_pipeline/              # R extraction + Python processing + ML models
 │   ├── .lintr.R                # Linter configuration for R scripts
 │   ├── exploreFitzRoy.R        # R script exploring fitzRoy data endpoints (writes sample_*.csv)
 │   ├── exploreSquiggle.py      # Empty placeholder: Squiggle exploration is paused
-│   ├── fetch_results.R         # R: AFL Tables results 2000–present -> data/afltables_results.csv
+│   ├── .env.example            # template for data_pipeline/.env (DATABASE_URL, TEST_DATABASE_URL), the one secrets file
+│   ├── fetch_results.R         # R: AFL Tables results 2000–present -> raw_afltables_results
+│   ├── load_matches.py         # raw_afltables_results -> teams/venues sync + clean matches
 │   ├── run_elo_history.py      # Runs EloEngine over all results, prints sanity-check report
 │   ├── tune_elo.py             # Two-stage constant tuning (Stage A holdout gate, Stage B refit)
-│   ├── data/                   # Local data files (gitignored): raw results, elo_history.csv
+│   ├── data/                   # Local outputs (gitignored): tuned_config.json
 │   ├── pyproject.toml          # pytest config (pythonpath=".", testpaths="tests")
 │   ├── requirements.R          # R package dependencies installer script
 │   ├── requirements.txt        # Python data processing & modeling dependencies (incl. pytest)
@@ -90,7 +101,8 @@ afl-analytics-hub/
 │   │   ├── history.py          # build_history: engine run + scoreboard scores
 │   │   ├── tuning.py           # grids, scoring rules, coordinate search
 │   │   └── tuned.py            # TUNED_CONFIG (Tier-1 values) + provenance
-│   └── tests/elo/              # pytest suite for the Elo engine
+│   ├── db/                     # psycopg2 access: connection, reference sync, matches, Elo runs
+│   └── tests/                  # pytest: elo/ (pure), db/ (integration; needs TEST_DATABASE_URL)
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
 │                               # NOTE: currently gitignored. See "Known housekeeping" below
@@ -149,13 +161,18 @@ source venv/bin/activate
 pytest            # config in pyproject.toml; tests live in tests/
 ```
 
-### Running the Elo historical run
+### Running the data pipeline
 ```bash
+cd ~/PersonalProjects/afl-analytics-hub/database && npm run migrate:deploy   # apply schema migrations
 cd ~/PersonalProjects/afl-analytics-hub
-Rscript data_pipeline/fetch_results.R          # refresh raw results (network, ~1 min)
+Rscript data_pipeline/fetch_results.R          # AFL Tables -> raw_afltables_results (network, ~1 min)
 source data_pipeline/venv/bin/activate
-python data_pipeline/run_elo_history.py        # report + data_pipeline/data/elo_history.csv
+python data_pipeline/load_matches.py           # raw -> clean matches (clears Elo ratings: rerun Elo next)
+python data_pipeline/run_elo_history.py        # Elo runs "tier0"/"tuned" -> DB + report
+python data_pipeline/tune_elo.py               # optional: re-run tuning (~1 min)
 ```
+Integration tests use `afl_analytics_test` and empty it on each run. After adding a migration, also run
+`npm run migrate:deploy:test` in `database/`.
 
 ---
 
@@ -165,15 +182,27 @@ python data_pipeline/run_elo_history.py        # report + data_pipeline/data/elo
 - **Database name:** `afl_analytics`
 - **User:** `afl_user`
 - **Connection string:** `postgresql://afl_user:<password>@localhost:5432/afl_analytics`
-- Connection string lives in `.env` files — never hardcoded
+- **Test database:** `afl_analytics_test` (integration tests; emptied on every test run)
+- Connection strings live in ONE gitignored file, `data_pipeline/.env` (template: `.env.example`), read by Python, R
+  and Prisma — never hardcoded
 
 ### Starting PostgreSQL
 ```bash
 sudo service postgresql start
 ```
 
-### Schema Design/Status
-Not yet created. Design is likely the next major task after the Elo engine.
+### Schema
+Owned by Prisma (`database/prisma/schema.prisma`); change it with `npm run migrate:dev -- --name <change>` in `database/`
+(needs CREATEDB for the shadow database, already granted to `afl_user`). Tables:
+
+| Table | Written by | Notes |
+|---|---|---|
+| `teams`, `venues` | `load_matches.py` | Synced from `elo/venues.py` (the source of truth) |
+| `raw_afltables_results` | `fetch_results.R` | Raw fitzRoy rows, snake_case; fully replaced each fetch; no FKs |
+| `matches` | `load_matches.py` | Clean, official round numbers; fully rebuilt each load (cascades to `elo_ratings`) |
+| `elo_runs`, `elo_ratings` | `run_elo_history.py` | One run per config name ("tier0", "tuned"); per-match engine output |
+
+R and Python never create or alter tables. R must never use `dbWriteTable(overwrite = TRUE)`.
 
 ---
 
@@ -210,8 +239,8 @@ main        — always working; merge a feature branch in once its tests pass
 ├── elo-engine-core                  ✅ merged (core Elo engine)
 ├── elo-historical-run               ✅ merged (AFL Tables adapter, historical run)
 ├── elo-venue-hga                    ✅ merged (Venue Adjustment Index)
-├── elo-optimisation                 ← CURRENT: two-stage constant tuning
-├── feature/db-schema-matches
+├── elo-optimisation                 ✅ merged (two-stage constant tuning)
+├── db-schema                        ← CURRENT: Prisma schema, PostgreSQL pipeline
 ├── feature/rolling-features
 ├── feature/xgboost-model
 └── ...
