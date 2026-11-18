@@ -29,7 +29,10 @@ This file provides full project context for Claude Code. Read this before making
     holdout: bits/game 0.1713 → 0.1805, tipping 69.1% → 70.3%. `EloConfig()` defaults remain the Tier-0 baseline
   - Elo Layer 1 is complete
 - Database live (Prisma schema in `database/`): teams, venues, raw AFL Tables results, clean matches, Elo runs/ratings.
-  The pipeline reads and writes PostgreSQL; the CSVs are retired. Next: Layer 2 (`feature/rolling-features`)
+  The pipeline reads and writes PostgreSQL; the CSVs are retired
+- Layer 2 features built (`data_pipeline/features/`, `build_features`): Elo/VAI, rest/bye, season-reset rolling form from
+  per-match team stats (AFL Tables player stats summed into `team_match_stats`, 2000–present). Report:
+  `python data_pipeline/report_features.py`. Next: `feature/xgboost-model`
 
 ---
 
@@ -79,8 +82,12 @@ afl-analytics-hub/
 │   ├── exploreFitzRoy.R        # R script exploring fitzRoy data endpoints (writes sample_*.csv)
 │   ├── exploreSquiggle.py      # Empty placeholder: Squiggle exploration is paused
 │   ├── .env.example            # template for data_pipeline/.env (DATABASE_URL, TEST_DATABASE_URL), the one secrets file
+│   ├── db_connection.R         # R: shared connect_db() / replace_table_rows() for the fetch scripts
 │   ├── fetch_results.R         # R: AFL Tables results 2000–present -> raw_afltables_results
+│   ├── fetch_player_stats.R    # R: AFL Tables player stats 2000–present -> raw_afltables_player_stats
 │   ├── load_matches.py         # raw_afltables_results -> teams/venues sync + clean matches
+│   ├── load_team_stats.py      # raw_afltables_player_stats -> team_match_stats (summed per team per match)
+│   ├── report_features.py      # Layer 2 feature report on 2010–2021 (coverage, corr with margin, corr after Elo)
 │   ├── run_elo_history.py      # Runs EloEngine over all results, prints sanity-check report
 │   ├── tune_elo.py             # Two-stage constant tuning (Stage A holdout gate, Stage B refit)
 │   ├── data/                   # Local outputs (gitignored): tuned_config.json
@@ -101,8 +108,9 @@ afl-analytics-hub/
 │   │   ├── history.py          # build_history: engine run + scoreboard scores
 │   │   ├── tuning.py           # grids, scoring rules, coordinate search
 │   │   └── tuned.py            # TUNED_CONFIG (Tier-1 values) + provenance
-│   ├── db/                     # psycopg2 access: connection, reference sync, matches, Elo runs
-│   └── tests/                  # pytest: elo/ (pure), db/ (integration; needs TEST_DATABASE_URL)
+│   ├── db/                     # psycopg2 access: connection, reference sync, matches, team stats, Elo runs
+│   ├── features/               # Layer 2 features (pure): rest.py, form.py, build.py (build_features)
+│   └── tests/                  # pytest: elo/ and features/ (pure), db/ (integration; needs TEST_DATABASE_URL)
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
 │                               # NOTE: currently gitignored. See "Known housekeeping" below
@@ -166,9 +174,12 @@ pytest            # config in pyproject.toml; tests live in tests/
 cd ~/PersonalProjects/afl-analytics-hub/database && npm run migrate:deploy   # apply schema migrations
 cd ~/PersonalProjects/afl-analytics-hub
 Rscript data_pipeline/fetch_results.R          # AFL Tables -> raw_afltables_results (network, ~1 min)
+Rscript data_pipeline/fetch_player_stats.R     # AFL Tables player stats -> raw_afltables_player_stats (~1 min)
 source data_pipeline/venv/bin/activate
-python data_pipeline/load_matches.py           # raw -> clean matches (clears Elo ratings: rerun Elo next)
+python data_pipeline/load_matches.py           # raw -> clean matches (clears team stats + Elo ratings: rerun both)
+python data_pipeline/load_team_stats.py        # player stats -> team_match_stats
 python data_pipeline/run_elo_history.py        # Elo runs "tier0"/"tuned" -> DB + report
+python data_pipeline/report_features.py        # Layer 2 feature report (2010–2021 only)
 python data_pipeline/tune_elo.py               # optional: re-run tuning (~1 min)
 ```
 Integration tests use `afl_analytics_test` and empty it on each run. After adding a migration, also run
@@ -201,6 +212,8 @@ Owned by Prisma (`database/prisma/schema.prisma`); change it with `npm run migra
 | `raw_afltables_results` | `fetch_results.R` | Raw fitzRoy rows, snake_case; fully replaced each fetch; no FKs |
 | `matches` | `load_matches.py` | Clean, official round numbers; fully rebuilt each load (cascades to `elo_ratings`) |
 | `elo_runs`, `elo_ratings` | `run_elo_history.py` | One run per config name ("tier0", "tuned"); per-match engine output |
+| `raw_afltables_player_stats` | `fetch_player_stats.R` | Raw fitzRoy player-match rows, snake_case; fully replaced each fetch; no FKs |
+| `team_match_stats` | `load_team_stats.py` | Player stats summed per team per match (exactly 2 per match); cascades from `matches` |
 
 R and Python never create or alter tables. R must never use `dbWriteTable(overwrite = TRUE)`.
 
@@ -240,8 +253,8 @@ main        — always working; merge a feature branch in once its tests pass
 ├── elo-historical-run               ✅ merged (AFL Tables adapter, historical run)
 ├── elo-venue-hga                    ✅ merged (Venue Adjustment Index)
 ├── elo-optimisation                 ✅ merged (two-stage constant tuning)
-├── db-schema                        ← CURRENT: Prisma schema, PostgreSQL pipeline
-├── feature/rolling-features
+├── db-schema                        ✅ merged (Prisma schema, PostgreSQL pipeline)
+├── rolling-features                 ← CURRENT: team stats + Layer 2 features
 ├── feature/xgboost-model
 └── ...
 ```
@@ -415,20 +428,21 @@ gaps that aren't bye-affected; >10 days more cleanly isolates genuine bye-round 
 days). The separate 9-day cap on `rest_diff` is unchanged — it limits outlier influence on the
 differential feature, a different concern from identifying bye rounds.
 
-### Features for Layer 2 (EWMA, 5-game half-life, home minus away differential)
-| Feature | Source |
+### Features for Layer 2 (`features/build.py`; home minus away; pre-match information only)
+| Feature | Definition / source |
 |---|---|
-| Elo differential | Computed |
-| Venue HGA (VAI) | Computed |
-| Days rest differential (capped) | fetch_fixture() |
-| is_off_bye (home), is_off_bye (away) | fetch_fixture() |
-| Rolling scoring margin | fetch_results() |
-| Rolling win rate | fetch_results() |
-| Inside 50s differential | fetch_team_stats() |
-| Contested possessions differential | fetch_team_stats() |
-| I50/R50 efficiency | fetch_team_stats() |
-| Clearances differential | fetch_team_stats() |
-| Kicking efficiency (goals / scoring shots) | fetch_results() |
+| `elo_diff`, `vai_diff`, `elo_home_win_prob` | EloEngine run with a chosen config (`build_features(..., elo_config)`) |
+| `home_days_rest`, `away_days_rest`, `rest_diff` | Days since previous game **this season** (first game: empty); diff of rests capped at 9 |
+| `home_off_bye`, `away_off_bye` | Rest > 10 days |
+| `form_<v>_diff` | Weighted average (5-game half-life) of v over the team's **earlier games this season**, home − away; v = margin, win, inside_50s_net, contested_poss_net, clearances_net, i50_efficiency (scoring shots / inside 50s), kicking_efficiency (goals / scoring shots) |
+| `home_games_this_season`, `away_games_this_season`, `is_final` | Context |
+
+**Rolling form resets each season** (decided 2026-11-18): over 2010–2021, last season's closing form correlates +0.24
+with early-season margins on its own, but −0.03 once Elo is accounted for (−0.21 in Round 1), because Elo already carries
+team strength over. "I50/R50 efficiency" became `i50_efficiency` (rebound 50s largely mirror the opponent's inside 50s).
+Team stats come from AFL Tables player stats (`fetch_player_stats.R`), not `fetch_team_stats()` (season totals only).
+For an honest Layer 2 holdout, build features with the Stage A Elo settings (`TUNED_CONFIG` with `home_label_bonus=15`),
+since `TUNED_CONFIG` itself was refitted on 2022–2026.
 
 ### Exclusions (deliberate)
 - **No bookmaker odds** — model independence
