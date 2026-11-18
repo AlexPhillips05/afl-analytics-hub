@@ -9,11 +9,12 @@ datasource db {
 // ---------- Reference data (synced from data_pipeline/elo/venues.py) ----------
 
 model Team {
-  id        Int     @id @default(autoincrement())
-  name      String  @unique // AFL Tables name, e.g. "Footscray", "GWS"
-  state     String // VIC, WA, SA, QLD, NSW
-  homeGames Match[] @relation("HomeTeam")
-  awayGames Match[] @relation("AwayTeam")
+  id         Int             @id @default(autoincrement())
+  name       String          @unique // AFL Tables name, e.g. "Footscray", "GWS"
+  state      String // VIC, WA, SA, QLD, NSW
+  homeGames  Match[]         @relation("HomeTeam")
+  awayGames  Match[]         @relation("AwayTeam")
+  matchStats TeamMatchStat[]
 
   @@map("teams")
 }
@@ -56,24 +57,25 @@ model RawAfltablesResult {
 // ---------- Clean matches (written by data_pipeline/load_matches.py) ----------
 
 model Match {
-  id            String      @id // "afltables-<game>" = MatchResult.match_id
-  afltablesGame Int         @unique @map("afltables_game")
+  id            String          @id // "afltables-<game>" = MatchResult.match_id
+  afltablesGame Int             @unique @map("afltables_game")
   season        Int
-  roundNumber   Int         @map("round_number") // Opening Round = 0; finals = last H&A round + 1
-  roundCode     String      @map("round_code") // original AFL Tables code: R1, WF, QF, ..., GF
-  isFinal       Boolean     @map("is_final") // includes the Wildcard round
-  date          DateTime    @db.Date
-  venueId       Int         @map("venue_id")
-  homeTeamId    Int         @map("home_team_id")
-  awayTeamId    Int         @map("away_team_id")
-  homeGoals     Int         @map("home_goals")
-  homeBehinds   Int         @map("home_behinds")
-  awayGoals     Int         @map("away_goals")
-  awayBehinds   Int         @map("away_behinds")
-  venue         Venue       @relation(fields: [venueId], references: [id])
-  homeTeam      Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam      Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  roundNumber   Int             @map("round_number") // Opening Round = 0; finals = last H&A round + 1
+  roundCode     String          @map("round_code") // original AFL Tables code: R1, WF, QF, ..., GF
+  isFinal       Boolean         @map("is_final") // includes the Wildcard round
+  date          DateTime        @db.Date
+  venueId       Int             @map("venue_id")
+  homeTeamId    Int             @map("home_team_id")
+  awayTeamId    Int             @map("away_team_id")
+  homeGoals     Int             @map("home_goals")
+  homeBehinds   Int             @map("home_behinds")
+  awayGoals     Int             @map("away_goals")
+  awayBehinds   Int             @map("away_behinds")
+  venue         Venue           @relation(fields: [venueId], references: [id])
+  homeTeam      Team            @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam      Team            @relation("AwayTeam", fields: [awayTeamId], references: [id])
   eloRatings    EloRating[]
+  teamStats     TeamMatchStat[]
 
   @@index([season, roundNumber])
   @@index([date, afltablesGame])
@@ -112,4 +114,85 @@ model EloRating {
 
   @@id([runId, matchId])
   @@map("elo_ratings")
+}
+
+// ---------- Player stats (written by data_pipeline/fetch_player_stats.R) ----------
+
+// Raw fitzRoy::fetch_player_stats_afltables() rows, columns renamed to snake_case, values untouched.
+// Fully replaced on each fetch. No foreign keys. Stats are nullable: AFL Tables has gaps
+// (e.g. goal assists before 2003, time on ground in early seasons, a few rows without a player id).
+model RawAfltablesPlayerStat {
+  id                     Int      @id @default(autoincrement())
+  season                 Int
+  round                  String // "1", "EF", "Wildcard Final", ... (AFL Tables player-page style)
+  date                   DateTime @db.Date
+  venue                  String
+  homeTeam               String   @map("home_team")
+  awayTeam               String   @map("away_team")
+  playingFor             String   @map("playing_for")
+  playerId               Int?     @map("player_id")
+  firstName              String   @map("first_name")
+  surname                String
+  kicks                  Int?
+  marks                  Int?
+  handballs              Int?
+  disposals              Int?
+  goals                  Int?
+  behinds                Int?
+  hitOuts                Int?     @map("hit_outs")
+  tackles                Int?
+  rebounds               Int?
+  inside50s              Int?     @map("inside_50s")
+  clearances             Int?
+  clangers               Int?
+  freesFor               Int?     @map("frees_for")
+  freesAgainst           Int?     @map("frees_against")
+  brownlowVotes          Int?     @map("brownlow_votes")
+  contestedPossessions   Int?     @map("contested_possessions")
+  uncontestedPossessions Int?     @map("uncontested_possessions")
+  contestedMarks         Int?     @map("contested_marks")
+  marksInside50          Int?     @map("marks_inside_50")
+  onePercenters          Int?     @map("one_percenters")
+  bounces                Int?
+  goalAssists            Int?     @map("goal_assists")
+  timeOnGround           Int?     @map("time_on_ground")
+  substitute             String?
+  fetchedAt              DateTime @default(now()) @map("fetched_at") @db.Timestamptz(6)
+
+  @@index([date, homeTeam, awayTeam])
+  @@map("raw_afltables_player_stats")
+}
+
+// ---------- Team stats per match (written by data_pipeline/load_team_stats.py) ----------
+
+// Sums of player stats per team per match. A stat is null when every player value was null
+// (e.g. goal assists before 2003). Rebuilding matches cascades here: re-run load_team_stats.py.
+model TeamMatchStat {
+  matchId                String  @map("match_id")
+  teamId                 Int     @map("team_id")
+  isHome                 Boolean @map("is_home")
+  players                Int
+  kicks                  Int?
+  handballs              Int?
+  marks                  Int?
+  tackles                Int?
+  inside50s              Int?    @map("inside_50s")
+  rebounds               Int?
+  clearances             Int?
+  contestedPossessions   Int?    @map("contested_possessions")
+  uncontestedPossessions Int?    @map("uncontested_possessions")
+  clangers               Int?
+  freesFor               Int?    @map("frees_for")
+  freesAgainst           Int?    @map("frees_against")
+  hitOuts                Int?    @map("hit_outs")
+  contestedMarks         Int?    @map("contested_marks")
+  marksInside50          Int?    @map("marks_inside_50")
+  onePercenters          Int?    @map("one_percenters")
+  goalAssists            Int?    @map("goal_assists")
+  bounces                Int?
+  match                  Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team                   Team    @relation(fields: [teamId], references: [id])
+
+  @@id([matchId, teamId])
+  @@map("team_match_stats")
 }
