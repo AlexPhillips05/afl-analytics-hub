@@ -33,10 +33,10 @@ This file provides full project context for Claude Code. Read this before making
 - Layer 2 features built (`data_pipeline/features/`, `build_features`): Elo/VAI, rest/bye, season-reset rolling form from
   per-match team stats (AFL Tables player stats summed into `team_match_stats`, 2000–present). Report:
   `python data_pipeline/report_features.py`
-- Layer 2 evaluated (`data_pipeline/layer2/`, `python data_pipeline/train_layer2.py`): Elo baseline vs Ridge vs XGBoost
-  margin models. **Verdict: KEEP ELO BASELINE.** XGBoost was marginally better on MAE (holdout 25.93 vs 25.98) but worse
-  on bits (0.1749 vs 0.1776), so it failed the bits guard. Current features add nothing reliable beyond Elo. Final model:
-  Elo baseline margin model, saved to `data_pipeline/data/layer2_model.joblib`
+- Layer 2 evaluated (`data_pipeline/layer2/`, `python data_pipeline/train_layer2.py`): margin model and win-probability
+  source chosen separately. Latest run (`versus-elo-expectation`, holdout look 2): **margin KEEP ELO BASELINE, probability
+  KEEP ELO ENGINE**. New feature `form_vs_elo_diff` is the strongest beyond Elo, but XGBoost's MAE edge (−0.05, z −0.3)
+  is noise. Final model: Elo baseline margin + Elo engine probability, saved to `data_pipeline/data/layer2_model.joblib`
 
 ---
 
@@ -262,7 +262,8 @@ main        — always working; merge a feature branch in once its tests pass
 ├── elo-optimisation                 ✅ merged (two-stage constant tuning)
 ├── db-schema                        ✅ merged (Prisma schema, PostgreSQL pipeline)
 ├── rolling-features                 ✅ merged (team stats + Layer 2 features)
-├── xgboost-model                    ← CURRENT: Layer 2 model evaluation (verdict: keep Elo baseline)
+├── xgboost-model                    ✅ merged (Layer 2 model evaluation; verdict: keep Elo baseline)
+├── versus-elo-expectation           ← CURRENT: form_vs_elo_diff + separate probability source
 └── ...
 ```
 
@@ -307,13 +308,20 @@ Two-layer architecture:
 **Layer 2 — Margin model** (`layer2/`, evaluated 2026-11-18)
 - Inputs: `build_features` (Elo/VAI, rest/bye, season-reset rolling form); target `target_home_margin`
 - Contenders: Elo baseline (linear on elo_diff + vai_diff), Ridge, XGBoost (xgboost-cpu 3.4.1)
-- Win probability: logistic of the predicted margin, `1 / (1 + exp(-margin / s))`, with `s` fitted on out-of-fold predictions
-- Protocol: Stage A Elo features; walk-forward CV (validate 2014–2019, 2021); pick by MAE with a bits guard; holdout scored once
-- **Result: KEEP ELO BASELINE.** CV MAE: baseline 28.87, Ridge 28.85, XGBoost 28.84 (XGBoost chose the simplest grid
-  point). Holdout 2022–2026: MAE 25.98 / 26.06 / 25.93, bits 0.1776 / 0.1696 / 0.1749. The Elo engine's own probability
-  scored best on bits (0.1805), better than any margin-logistic. Two follow-ups:
-  (1) features need information Elo doesn't have (form vs Elo expectation, team selection);
-  (2) consider taking the win probability from the Elo engine rather than from the margin-logistic
+- **Margin and win probability are chosen separately** (decided 2026-11-18):
+  - Margin: the candidate (Ridge or XGBoost, lower CV MAE) must beat the Elo baseline in CV by ≥ 2 standard errors of
+    the per-game paired difference in absolute error (`MIN_Z`), and still be lower on holdout MAE. Noise-level wins go
+    to the simpler model
+  - Probability: default is the Elo engine's own `elo_home_win_prob` (tuned directly on bits). A margin curve
+    `1 / (1 + exp(-margin / s))` (`s` fitted on out-of-fold predictions) replaces it only if better on bits in CV and holdout
+- Protocol: Stage A Elo features; walk-forward CV (validate 2014–2019, 2021); the 2022–2026 holdout only confirms. It has
+  been looked at twice (`holdout_looks` in `layer2_report.json`); the next unseen season is the real test
+- **xgboost-model:** KEEP ELO BASELINE. Holdout MAE 25.98 / 26.06 / 25.93 (baseline / Ridge / XGBoost); the Elo engine's
+  probability scored best on bits (0.1805 vs 0.1776 for the best margin curve)
+- **versus-elo-expectation** (adds `form_vs_elo_diff`): margin KEEP ELO BASELINE (XGBoost CV MAE −0.048, SE 0.164,
+  z −0.30; holdout 25.92 vs 25.98); probability KEEP ELO ENGINE (holdout bits 0.1805). The feature improves Ridge and
+  XGBoost CV MAE by only ~0.02. Next ideas: information beyond results (team selection; player data is currently
+  excluded), or improving Elo itself, which under-reacts early in the season
 - Temporal cross-validation only (never shuffle — must train on past, predict future)
 
 ### Tuned values (Tier-1) — `elo/tuned.py`
@@ -448,6 +456,7 @@ differential feature, a different concern from identifying bye rounds.
 | `home_days_rest`, `away_days_rest`, `rest_diff` | Days since previous game **this season** (first game: empty); diff of rests capped at 9 |
 | `home_off_bye`, `away_off_bye` | Rest > 10 days |
 | `form_<v>_diff` | Weighted average (5-game half-life) of v over the team's **earlier games this season**, home − away; v = margin, win, inside_50s_net, contested_poss_net, clearances_net, i50_efficiency (scoring shots / inside 50s), kicking_efficiency (goals / scoring shots) |
+| `form_vs_elo_diff` | Same rolling form of `vs_elo` = adjusted margin − Elo's expected margin (`outcome_scale × logit(expected win prob)`): how much a team has recently beaten Elo's expectation. Strongest feature after Elo (+0.098 on 2010–2021; +0.15 in rounds 0–5) |
 | `home_games_this_season`, `away_games_this_season`, `is_final` | Context |
 
 **Rolling form resets each season** (decided 2026-11-18): over 2010–2021, last season's closing form correlates +0.24
