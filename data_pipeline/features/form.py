@@ -6,7 +6,7 @@ HALF_LIFE_GAMES = 5  # CLAUDE.md: exponentially weighted, 5-game half-life
 # Per team-game values that become rolling form (team perspective).
 FORM_VALUES = (
     "margin", "win", "inside_50s_net", "contested_poss_net", "clearances_net",
-    "i50_efficiency", "kicking_efficiency",
+    "i50_efficiency", "kicking_efficiency", "vs_elo",
 )
 
 
@@ -14,7 +14,8 @@ def team_game_values(team_games: pd.DataFrame) -> pd.DataFrame:
     """Each team's values for one game, from its own and its opponent's totals.
 
     Needs columns: score, opp_score, goals, behinds, inside_50s, opp_inside_50s,
-    contested_possessions, opp_contested_possessions, clearances, opp_clearances.
+    contested_possessions, opp_contested_possessions, clearances, opp_clearances, vs_elo (adjusted margin minus
+    Elo's expected margin, from features.build.elo_surprise).
     """
     g = team_games
     margin = g["score"] - g["opp_score"]
@@ -27,6 +28,7 @@ def team_game_values(team_games: pd.DataFrame) -> pd.DataFrame:
         "clearances_net": g["clearances"] - g["opp_clearances"],
         "i50_efficiency": shots / g["inside_50s"].replace(0, np.nan),
         "kicking_efficiency": g["goals"] / shots.replace(0, np.nan),
+        "vs_elo": g["vs_elo"],
     }, index=g.index)
 
 

@@ -4,7 +4,7 @@ import pytest
 
 from elo.config import EloConfig
 from elo.history import build_history
-from features.build import build_features, feature_columns
+from features.build import build_features, elo_surprise, feature_columns
 from tests.features.helpers import make_team_stats
 
 
@@ -43,3 +43,27 @@ def test_form_and_rest_differences_have_home_minus_away_sign(season_matches):
     for row in (0, 3):
         assert math.isnan(f.loc[row, "form_margin_diff"]) and math.isnan(f.loc[row, "rest_diff"])
     assert (f.loc[3, "home_games_this_season"], f.loc[3, "away_games_this_season"]) == (0, 0)
+
+
+def test_elo_surprise_is_adjusted_margin_minus_elo_expected_margin(season_matches):
+    config = EloConfig()
+    elo = build_history(season_matches, config)
+
+    surprise = elo_surprise(elo, config)
+
+    p = elo["expected_home_win_prob"]
+    expected_margin = config.outcome_scale * (p / (1 - p)).map(math.log)    # outcome_scale * logit(p)
+    assert list(surprise) == pytest.approx(list(elo["adjusted_margin"] - expected_margin))
+
+
+def test_form_vs_elo_diff_has_home_minus_away_sign_and_resets(season_matches):
+    config = EloConfig()
+    s = elo_surprise(build_history(season_matches, config), config)
+
+    f = build_features(season_matches, make_team_stats(season_matches), config)
+
+    assert "form_vs_elo_diff" in feature_columns(f)
+    # Match 3: Geelong (home; earlier: away in match 2, so -s[1]) v Richmond (away; earlier: home in match 1, +s[0]).
+    assert f.loc[2, "form_vs_elo_diff"] == pytest.approx(-s[1] - s[0])
+    # Match 2: Geelong has no earlier game; match 4: new season.
+    assert math.isnan(f.loc[1, "form_vs_elo_diff"]) and math.isnan(f.loc[3, "form_vs_elo_diff"])
