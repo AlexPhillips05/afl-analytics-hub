@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from layer2.evaluate import cv_gate, holdout_verdict, out_of_fold, score
+from layer2.evaluate import margin_cv_gate, margin_gate, out_of_fold, paired_mae_diff, prob_gate, score
 from layer2.splits import walk_forward_folds
 from tests.layer2.helpers import synthetic_features
 
@@ -44,19 +44,40 @@ def test_out_of_fold_predicts_each_validation_row_once():
     assert set(oof.index) == set().union(*(set(val) for _, _, val in folds))
 
 
+def test_paired_mae_diff():
+    f = pd.DataFrame({"target_home_margin": [0, 0, 0, 0]})
+    base = pd.Series([10.0, -10.0, 10.0, 10.0], index=f.index)
+    cand = pd.Series([9.0, -11.0, 9.0, 10.5], index=f.index)
+
+    diff, se = paired_mae_diff(cand, base, f)
+
+    d = np.array([-1.0, 1.0, -1.0, 0.5])                       # |cand error| - |base error| per game
+    assert diff == pytest.approx(d.mean())
+    assert se == pytest.approx(d.std(ddof=1) / 2)
+
+
+def test_margin_cv_gate_needs_a_clear_win():
+    f = pd.DataFrame({"target_home_margin": [0, 0, 0, 0]})
+    base = pd.Series([10.0, 10.0, 10.0, 10.0], index=f.index)
+
+    assert margin_cv_gate(pd.Series([2.0, 3.0, 2.0, 3.0], index=f.index), base, f)          # far better every game
+    assert not margin_cv_gate(pd.Series([9.0, 11.0, 9.0, 10.5], index=f.index), base, f)    # lower on average, but noise
+    assert not margin_cv_gate(base.copy(), base, f)                                         # a tie goes to the baseline
+
+
 @pytest.mark.parametrize("cand, base, expected", [
-    ({"mae": 29.0, "bits_per_game": 0.20}, {"mae": 30.0, "bits_per_game": 0.19}, True),
-    ({"mae": 29.0, "bits_per_game": 0.19}, {"mae": 30.0, "bits_per_game": 0.19}, True),    # equal bits is fine
-    ({"mae": 29.0, "bits_per_game": 0.18}, {"mae": 30.0, "bits_per_game": 0.19}, False),   # bits guard
+    ({"mae": 29.0, "bits_per_game": 0.10}, {"mae": 30.0, "bits_per_game": 0.19}, True),    # bits don't matter
     ({"mae": 30.0, "bits_per_game": 0.25}, {"mae": 30.0, "bits_per_game": 0.19}, False),   # must beat MAE
+    ({"mae": 31.0, "bits_per_game": 0.25}, {"mae": 30.0, "bits_per_game": 0.19}, False),
 ])
-def test_cv_gate(cand, base, expected):
-    assert cv_gate(cand, base) is expected
+def test_holdout_margin_gate_is_mae_only(cand, base, expected):
+    assert margin_gate(cand, base) is expected
 
 
-def test_holdout_verdict_needs_cv_pass_and_holdout_win():
-    better, worse = {"mae": 29.0, "bits_per_game": 0.2}, {"mae": 30.0, "bits_per_game": 0.2}
-
-    assert holdout_verdict(True, better, worse) == "ADOPT"
-    assert holdout_verdict(False, better, worse) == "KEEP ELO BASELINE"
-    assert holdout_verdict(True, worse, better) == "KEEP ELO BASELINE"
+@pytest.mark.parametrize("chal, default, expected", [
+    ({"mae": 99.0, "bits_per_game": 0.20}, {"mae": None, "bits_per_game": 0.19}, True),    # MAE doesn't matter
+    ({"mae": 20.0, "bits_per_game": 0.19}, {"mae": None, "bits_per_game": 0.19}, False),   # must be strictly better
+    ({"mae": 20.0, "bits_per_game": 0.18}, {"mae": None, "bits_per_game": 0.19}, False),
+])
+def test_prob_gate_is_bits_only(chal, default, expected):
+    assert prob_gate(chal, default) is expected

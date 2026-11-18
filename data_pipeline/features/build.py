@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 
 from elo.config import EloConfig
@@ -10,14 +12,26 @@ ID_COLUMNS = ["match_id", "season", "round_number", "date", "home_team", "away_t
 TARGET_COLUMNS = ["target_home_margin", "target_home_result"]
 
 
-def _team_games(matches: list[MatchResult], team_stats: pd.DataFrame) -> pd.DataFrame:
+def elo_surprise(elo: pd.DataFrame, config: EloConfig) -> pd.Series:
+    """Per match: the home team's adjusted margin minus the margin Elo expected (engine units, home perspective).
+
+    Expected margin = outcome_scale * logit(expected_home_win_prob): the adjusted margin at which the engine's soft
+    outcome equals its pre-game expectation. Computed from ratings + VAI, the same difference the engine uses.
+    """
+    effective_diff = (elo["home_rating_pre"] + elo["home_vai"]) - (elo["away_rating_pre"] + elo["away_vai"])
+    expected_margin = config.outcome_scale * math.log(10) * effective_diff / 400
+    return elo["adjusted_margin"] - expected_margin
+
+
+def _team_games(matches: list[MatchResult], team_stats: pd.DataFrame, home_vs_elo: pd.Series) -> pd.DataFrame:
     """Two rows per match (home then away) with the team's and its opponent's totals, in match order."""
     stats = team_stats.set_index(["match_id", "team"])
     rows = []
     for order, m in enumerate(matches):
-        sides = [(m.home_team, m.away_team, True, m.home_goals, m.home_behinds, m.home_score, m.away_score),
-                 (m.away_team, m.home_team, False, m.away_goals, m.away_behinds, m.away_score, m.home_score)]
-        for team, opp, is_home, goals, behinds, score, opp_score in sides:
+        surprise = float(home_vs_elo.iloc[order])
+        sides = [(m.home_team, m.away_team, True, m.home_goals, m.home_behinds, m.home_score, m.away_score, surprise),
+                 (m.away_team, m.home_team, False, m.away_goals, m.away_behinds, m.away_score, m.home_score, -surprise)]
+        for team, opp, is_home, goals, behinds, score, opp_score, vs_elo in sides:
             own, theirs = stats.loc[(m.match_id, team)], stats.loc[(m.match_id, opp)]
             rows.append({
                 "order": order, "match_id": m.match_id, "season": m.season, "date": m.date, "team": team,
@@ -26,6 +40,7 @@ def _team_games(matches: list[MatchResult], team_stats: pd.DataFrame) -> pd.Data
                 "contested_possessions": own["contested_possessions"],
                 "opp_contested_possessions": theirs["contested_possessions"],
                 "clearances": own["clearances"], "opp_clearances": theirs["clearances"],
+                "vs_elo": vs_elo,
             })
     games = pd.DataFrame(rows)
     games["date"] = pd.to_datetime(games["date"])
@@ -38,13 +53,13 @@ def build_features(matches: list[MatchResult], team_stats: pd.DataFrame, elo_con
     `matches` must be in chronological order (as read_matches returns them); `team_stats` is
     read_team_stats output covering every match. Every feature uses only pre-kick-off information.
     """
-    games = _team_games(matches, team_stats)
+    elo = build_history(matches, elo_config)
+    games = _team_games(matches, team_stats, elo_surprise(elo, elo_config))
     games["days_rest"] = days_rest(games)
     form = rolling_form(games, team_game_values(games))
     home, away = games[games["is_home"]].reset_index(drop=True), games[~games["is_home"]].reset_index(drop=True)
     home_form, away_form = form[games["is_home"].to_numpy()].reset_index(drop=True), form[~games["is_home"].to_numpy()].reset_index(drop=True)
 
-    elo = build_history(matches, elo_config)
     out = pd.DataFrame({
         "match_id": [m.match_id for m in matches],
         "season": [m.season for m in matches],
