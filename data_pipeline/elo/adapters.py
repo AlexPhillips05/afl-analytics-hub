@@ -70,5 +70,6 @@ def afltables_to_matches(df: pd.DataFrame) -> list[MatchResult]:
             match_id=f"afltables-{int(row['Game'])}",
             date=row["Date"],
             venue=str(row["Venue"]),
+            round_code=code,
         ))
     return matches

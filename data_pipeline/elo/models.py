@@ -21,6 +21,7 @@ class MatchResult:
     match_id: str | None = None
     date: Date | None = None
     venue: str | None = None
+    round_code: str | None = None  # original source code, e.g. "R1", "WF", "GF" (stored in the database)
 
     @property
     def home_score(self) -> int:

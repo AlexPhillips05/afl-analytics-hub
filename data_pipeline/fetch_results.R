@@ -1,26 +1,52 @@
 # data_pipeline/fetch_results.R
-# Fetch every AFL match result from 2000 to the current year from AFL Tables
-# and write the raw rows to data_pipeline/data/afltables_results.csv (gitignored).
-# No transformation here: elo/adapters.py owns the mapping into MatchResult.
+# Fetch every AFL match result from 2000 to the current year from AFL Tables and land the raw rows
+# in the raw_afltables_results table. Values are untouched (columns are only renamed to snake_case);
+# data_pipeline/load_matches.py turns them into clean matches.
+#
+# The table is owned by Prisma (database/): this script only deletes and appends rows. It must
+# never use dbWriteTable(overwrite = TRUE), which would drop and recreate the table.
 #
 # Run from the repo root:  Rscript data_pipeline/fetch_results.R
+# Connection: DATABASE_URL from data_pipeline/.env (an already-set DATABASE_URL takes precedence).
 
 suppressPackageStartupMessages({
   library(fitzRoy)
-  library(readr)
+  library(DBI)
 })
 
 first_season <- 2000
 last_season <- as.integer(format(Sys.Date(), "%Y"))
-out_dir <- "data_pipeline/data"
-out_file <- file.path(out_dir, "afltables_results.csv")
 
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+if (Sys.getenv("DATABASE_URL") == "") readRenviron("data_pipeline/.env")
+url <- Sys.getenv("DATABASE_URL")
+if (url == "") stop("DATABASE_URL is not set: add it to data_pipeline/.env (see .env.example)")
+
+# fitzRoy/AFL Tables column -> raw_afltables_results column
+raw_columns <- c(
+  Game = "game", Date = "date", Season = "season", Round = "round", Round.Type = "round_type",
+  Round.Number = "round_number", Home.Team = "home_team", Home.Goals = "home_goals",
+  Home.Behinds = "home_behinds", Home.Points = "home_points", Away.Team = "away_team",
+  Away.Goals = "away_goals", Away.Behinds = "away_behinds", Away.Points = "away_points",
+  Venue = "venue", Margin = "margin"
+)
 
 cat(sprintf("Fetching AFL Tables results %d-%d...\n", first_season, last_season))
 results <- fetch_results_afltables(first_season:last_season)
-results <- results[results$Season >= first_season & results$Season <= last_season, ]
+results <- results[results$Season >= first_season & results$Season <= last_season, names(raw_columns)]
+names(results) <- unname(raw_columns)
 
-write_csv(results, out_file)
-cat(sprintf("Wrote %d matches (%d seasons) to %s\n",
-            nrow(results), length(unique(results$Season)), out_file))
+# RPostgres doesn't accept a URL, so split postgresql://user:password@host:port/dbname into parts.
+parts <- regmatches(url, regexec("^postgres(?:ql)?://([^:@/]+):([^@]*)@([^:/]+)(?::([0-9]+))?/([^?]+)", url, perl = TRUE))[[1]]
+if (length(parts) == 0) stop("DATABASE_URL must look like postgresql://user:password@host:port/dbname")
+con <- dbConnect(
+  RPostgres::Postgres(),
+  user = URLdecode(parts[2]), password = URLdecode(parts[3]), host = parts[4],
+  port = if (parts[5] == "") 5432L else as.integer(parts[5]), dbname = parts[6]
+)
+on.exit(dbDisconnect(con))
+invisible(dbWithTransaction(con, {
+  dbExecute(con, "DELETE FROM raw_afltables_results")
+  dbAppendTable(con, "raw_afltables_results", results)
+}))
+cat(sprintf("Wrote %d matches (%d seasons) to raw_afltables_results\n",
+            nrow(results), length(unique(results$season))))
