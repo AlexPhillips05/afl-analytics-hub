@@ -3,24 +3,23 @@
 Stage A: tune on 2010-2021, score the 2022+ holdout once -> ADOPT or KEEP TIER-0.
 Stage B (only if ADOPT): re-tune on 2010-latest for the live settings (TUNED_CONFIG).
 
-Usage (from the repo root, data_pipeline venv active; takes a few minutes):
+Usage (from the repo root, data_pipeline venv active; after load_matches.py; about a minute):
     python data_pipeline/tune_elo.py
 """
 import json
 import sys
 import time
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
-
-from elo.adapters import afltables_to_matches
+from db.connection import connect
+from db.matches import read_matches
 from elo.config import EloConfig
 from elo.history import build_history
 from elo.tuning import TUNABLE_GRIDS, SearchResult, coordinate_search, mean_bits, summary
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
-RESULTS_CSV = DATA_DIR / "afltables_results.csv"
 OUTPUT_JSON = DATA_DIR / "tuned_config.json"
 
 TUNE_FIRST, TUNE_LAST = 2010, 2021
@@ -67,11 +66,11 @@ def format_drift(tier0: EloConfig, stage_a: EloConfig, stage_b: EloConfig) -> st
 
 
 def main() -> int:
-    if not RESULTS_CSV.exists():
-        print(f"Missing {RESULTS_CSV}. Run `Rscript data_pipeline/fetch_results.R` from the repo root first.",
-              file=sys.stderr)
+    with closing(connect()) as conn:  # db functions manage their own transactions
+        matches = read_matches(conn)
+    if not matches:
+        print("No matches in the database. Run fetch_results.R, then load_matches.py.", file=sys.stderr)
         return 1
-    matches = afltables_to_matches(pd.read_csv(RESULTS_CSV))
     latest = max(m.season for m in matches)
     tier0 = EloConfig()
 
@@ -110,6 +109,7 @@ def main() -> int:
         for name, value in changed.items():
             print(f"    {name}={value!r},")
 
+    DATA_DIR.mkdir(exist_ok=True)
     OUTPUT_JSON.write_text(json.dumps(output, indent=2))
     print(f"\nWrote {OUTPUT_JSON} ({time.time() - started:.0f}s)")
     return 0

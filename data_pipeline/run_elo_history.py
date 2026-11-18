@@ -1,25 +1,23 @@
 """Run the Elo engine over all AFL Tables results and print a sanity-check report.
 
-Runs twice, Tier-0 defaults vs TUNED_CONFIG, and compares them.
+Runs twice, Tier-0 defaults vs TUNED_CONFIG, compares them, and saves both runs to the database
+(elo_runs / elo_ratings, as "tier0" and "tuned").
 
-Usage (from the repo root, data_pipeline venv active):
-    Rscript data_pipeline/fetch_results.R      # once, to create the CSV
+Usage (from the repo root, data_pipeline venv active; after load_matches.py):
     python data_pipeline/run_elo_history.py
 """
 import sys
-from pathlib import Path
+from contextlib import closing
 
 import pandas as pd
 
-from elo.adapters import afltables_to_matches
+from db.connection import connect
+from db.elo_store import save_elo_run
+from db.matches import read_matches
 from elo.config import EloConfig
 from elo.evaluation import WARM_UP_LAST_SEASON, end_of_season_ratings, season_metrics
 from elo.history import build_history
 from elo.tuned import TUNED_CONFIG
-
-DATA_DIR = Path(__file__).resolve().parent / "data"
-RESULTS_CSV = DATA_DIR / "afltables_results.csv"
-HISTORY_CSV = DATA_DIR / "elo_history.csv"
 
 SUMMARY_COLUMNS = ["tip_accuracy", "home_baseline_accuracy", "bits_per_game", "home_bias", "mean_abs_rating_change"]
 
@@ -54,16 +52,17 @@ def format_report(tuned: pd.DataFrame, tier0: pd.DataFrame) -> str:
 
 
 def main() -> int:
-    if not RESULTS_CSV.exists():
-        print(f"Missing {RESULTS_CSV}. Run `Rscript data_pipeline/fetch_results.R` from the repo root first.",
-              file=sys.stderr)
-        return 1
-    matches = afltables_to_matches(pd.read_csv(RESULTS_CSV))
-    tier0 = build_history(matches, EloConfig())
-    tuned = build_history(matches, TUNED_CONFIG)
-    tuned.to_csv(HISTORY_CSV, index=False)
+    with closing(connect()) as conn:  # db functions manage their own transactions
+        matches = read_matches(conn)
+        if not matches:
+            print("No matches in the database. Run fetch_results.R, then load_matches.py.", file=sys.stderr)
+            return 1
+        tier0 = build_history(matches, EloConfig())
+        tuned = build_history(matches, TUNED_CONFIG)
+        save_elo_run(conn, "tier0", EloConfig(), tier0)
+        save_elo_run(conn, "tuned", TUNED_CONFIG, tuned)
     print(format_report(tuned, tier0))
-    print(f"\nWrote {len(tuned)} rows (Tuned) to {HISTORY_CSV}")
+    print(f"\nSaved Elo runs 'tier0' and 'tuned' ({len(tuned)} matches each) to the database")
     return 0
 
 
