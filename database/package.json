@@ -1,0 +1,16 @@
+{
+  "name": "afl-analytics-database",
+  "private": true,
+  "description": "PostgreSQL schema and migrations (Prisma) for afl-analytics-hub",
+  "scripts": {
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:deploy:test": "PRISMA_TARGET=test prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
+    "studio": "prisma studio"
+  },
+  "devDependencies": {
+    "dotenv": "17.2.3",
+    "prisma": "7.10.1"
+  }
+}

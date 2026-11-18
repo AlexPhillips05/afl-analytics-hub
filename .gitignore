@@ -54,6 +54,7 @@ Thumbs.db
 *.db
 *.sqlite
 .env.*
+!.env.example
 *.png
 data_pipeline/data/
 

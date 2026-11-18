@@ -1,0 +1,2 @@
+# Prisma checksums migration files: keep them LF regardless of core.autocrlf.
+database/prisma/migrations/** text eol=lf

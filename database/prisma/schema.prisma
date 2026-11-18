@@ -1,0 +1,115 @@
+// afl-analytics-hub database schema. Prisma owns the schema; R and Python read/write these
+// tables with plain SQL, so every model and field is mapped to snake_case.
+// No client generator yet: the frontend adds one when it starts reading data.
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Reference data (synced from data_pipeline/elo/venues.py) ----------
+
+model Team {
+  id        Int     @id @default(autoincrement())
+  name      String  @unique // AFL Tables name, e.g. "Footscray", "GWS"
+  state     String // VIC, WA, SA, QLD, NSW
+  homeGames Match[] @relation("HomeTeam")
+  awayGames Match[] @relation("AwayTeam")
+
+  @@map("teams")
+}
+
+model Venue {
+  id      Int     @id @default(autoincrement())
+  name    String  @unique // AFL Tables name, e.g. "M.C.G."
+  state   String // VIC, WA, SA, QLD, NSW, ACT, TAS, NT, CHN, NZ
+  matches Match[]
+
+  @@map("venues")
+}
+
+// ---------- Raw landing table (written by data_pipeline/fetch_results.R) ----------
+
+// Raw fitzRoy::fetch_results_afltables() rows, columns renamed to snake_case, values untouched.
+// Fully replaced on each fetch. No foreign keys: raw data is never rejected on landing.
+model RawAfltablesResult {
+  game        Int      @id
+  date        DateTime @db.Date
+  season      Int
+  round       String
+  roundType   String   @map("round_type")
+  roundNumber Int?     @map("round_number") // NA for the Wildcard round (WF)
+  homeTeam    String   @map("home_team")
+  homeGoals   Int      @map("home_goals")
+  homeBehinds Int      @map("home_behinds")
+  homePoints  Int      @map("home_points")
+  awayTeam    String   @map("away_team")
+  awayGoals   Int      @map("away_goals")
+  awayBehinds Int      @map("away_behinds")
+  awayPoints  Int      @map("away_points")
+  venue       String
+  margin      Int
+  fetchedAt   DateTime @default(now()) @map("fetched_at") @db.Timestamptz(6)
+
+  @@map("raw_afltables_results")
+}
+
+// ---------- Clean matches (written by data_pipeline/load_matches.py) ----------
+
+model Match {
+  id            String      @id // "afltables-<game>" = MatchResult.match_id
+  afltablesGame Int         @unique @map("afltables_game")
+  season        Int
+  roundNumber   Int         @map("round_number") // Opening Round = 0; finals = last H&A round + 1
+  roundCode     String      @map("round_code") // original AFL Tables code: R1, WF, QF, ..., GF
+  isFinal       Boolean     @map("is_final") // includes the Wildcard round
+  date          DateTime    @db.Date
+  venueId       Int         @map("venue_id")
+  homeTeamId    Int         @map("home_team_id")
+  awayTeamId    Int         @map("away_team_id")
+  homeGoals     Int         @map("home_goals")
+  homeBehinds   Int         @map("home_behinds")
+  awayGoals     Int         @map("away_goals")
+  awayBehinds   Int         @map("away_behinds")
+  venue         Venue       @relation(fields: [venueId], references: [id])
+  homeTeam      Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam      Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  eloRatings    EloRating[]
+
+  @@index([season, roundNumber])
+  @@index([date, afltablesGame])
+  @@map("matches")
+}
+
+// ---------- Elo output (written by data_pipeline/run_elo_history.py) ----------
+
+model EloRun {
+  id        Int         @id @default(autoincrement())
+  name      String      @unique // e.g. "tier0", "tuned"
+  config    Json // full EloConfig (dataclasses.asdict)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  ratings   EloRating[]
+
+  @@map("elo_runs")
+}
+
+// Rebuilding matches cascades here, so Elo runs are recomputed after every load (by design).
+model EloRating {
+  runId               Int    @map("run_id")
+  matchId             String @map("match_id")
+  homeRatingPre       Float  @map("home_rating_pre")
+  awayRatingPre       Float  @map("away_rating_pre")
+  homeVai             Float  @map("home_vai")
+  awayVai             Float  @map("away_vai")
+  expectedHomeWinProb Float  @map("expected_home_win_prob")
+  leagueAvgConversion Float  @map("league_avg_conversion")
+  adjustedMargin      Float  @map("adjusted_margin")
+  actualHomeOutcome   Float  @map("actual_home_outcome")
+  ratingChange        Float  @map("rating_change")
+  homeRatingPost      Float  @map("home_rating_post")
+  awayRatingPost      Float  @map("away_rating_post")
+  run                 EloRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  match               Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([runId, matchId])
+  @@map("elo_ratings")
+}
