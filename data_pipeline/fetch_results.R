@@ -3,23 +3,15 @@
 # in the raw_afltables_results table. Values are untouched (columns are only renamed to snake_case);
 # data_pipeline/load_matches.py turns them into clean matches.
 #
-# The table is owned by Prisma (database/): this script only deletes and appends rows. It must
-# never use dbWriteTable(overwrite = TRUE), which would drop and recreate the table.
+# The table is owned by Prisma (database/): this script only replaces rows (see db_connection.R).
 #
 # Run from the repo root:  Rscript data_pipeline/fetch_results.R
-# Connection: DATABASE_URL from data_pipeline/.env (an already-set DATABASE_URL takes precedence).
 
-suppressPackageStartupMessages({
-  library(fitzRoy)
-  library(DBI)
-})
+suppressPackageStartupMessages(library(fitzRoy))
+source("data_pipeline/db_connection.R")
 
 first_season <- 2000
 last_season <- as.integer(format(Sys.Date(), "%Y"))
-
-if (Sys.getenv("DATABASE_URL") == "") readRenviron("data_pipeline/.env")
-url <- Sys.getenv("DATABASE_URL")
-if (url == "") stop("DATABASE_URL is not set: add it to data_pipeline/.env (see .env.example)")
 
 # fitzRoy/AFL Tables column -> raw_afltables_results column
 raw_columns <- c(
@@ -35,18 +27,8 @@ results <- fetch_results_afltables(first_season:last_season)
 results <- results[results$Season >= first_season & results$Season <= last_season, names(raw_columns)]
 names(results) <- unname(raw_columns)
 
-# RPostgres doesn't accept a URL, so split postgresql://user:password@host:port/dbname into parts.
-parts <- regmatches(url, regexec("^postgres(?:ql)?://([^:@/]+):([^@]*)@([^:/]+)(?::([0-9]+))?/([^?]+)", url, perl = TRUE))[[1]]
-if (length(parts) == 0) stop("DATABASE_URL must look like postgresql://user:password@host:port/dbname")
-con <- dbConnect(
-  RPostgres::Postgres(),
-  user = URLdecode(parts[2]), password = URLdecode(parts[3]), host = parts[4],
-  port = if (parts[5] == "") 5432L else as.integer(parts[5]), dbname = parts[6]
-)
+con <- connect_db()
 on.exit(dbDisconnect(con))
-invisible(dbWithTransaction(con, {
-  dbExecute(con, "DELETE FROM raw_afltables_results")
-  dbAppendTable(con, "raw_afltables_results", results)
-}))
+replace_table_rows(con, "raw_afltables_results", results)
 cat(sprintf("Wrote %d matches (%d seasons) to raw_afltables_results\n",
             nrow(results), length(unique(results$season))))

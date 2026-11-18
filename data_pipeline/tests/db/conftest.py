@@ -2,7 +2,10 @@ import pytest
 
 from db.connection import connect, database_url
 
-TABLES = "elo_ratings, elo_runs, matches, raw_afltables_results, teams, venues"
+TABLES = (
+    "elo_ratings, elo_runs, team_match_stats, matches, raw_afltables_results, raw_afltables_player_stats, "
+    "teams, venues"
+)
 
 
 @pytest.fixture
