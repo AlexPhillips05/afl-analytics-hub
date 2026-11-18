@@ -13,6 +13,8 @@ Settings not listed here keep their Tier-0 defaults from EloConfig (k_early etc.
 mov_correction=0 and vai_carryover=1.0 sit at natural limits: the autocorrelation correction is switched off,
 and venue tweaks no longer fade between seasons.
 """
+import dataclasses
+
 from elo.config import EloConfig
 
 TUNED_CONFIG = EloConfig(
@@ -29,3 +31,7 @@ TUNED_CONFIG = EloConfig(
     vai_learning_rate=0.075,
     vai_carryover=1.0,
 )
+
+# Stage A values (tuned on 2010-2021 only). They differ from TUNED_CONFIG only in home_label_bonus.
+# Use these when evaluating anything on the 2022+ holdout (e.g. Layer 2), so no Elo setting has seen it.
+STAGE_A_CONFIG = dataclasses.replace(TUNED_CONFIG, home_label_bonus=15.0)
