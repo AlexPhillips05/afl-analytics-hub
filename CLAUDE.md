@@ -32,7 +32,11 @@ This file provides full project context for Claude Code. Read this before making
   The pipeline reads and writes PostgreSQL; the CSVs are retired
 - Layer 2 features built (`data_pipeline/features/`, `build_features`): Elo/VAI, rest/bye, season-reset rolling form from
   per-match team stats (AFL Tables player stats summed into `team_match_stats`, 2000–present). Report:
-  `python data_pipeline/report_features.py`. Next: `feature/xgboost-model`
+  `python data_pipeline/report_features.py`
+- Layer 2 evaluated (`data_pipeline/layer2/`, `python data_pipeline/train_layer2.py`): Elo baseline vs Ridge vs XGBoost
+  margin models. **Verdict: KEEP ELO BASELINE.** XGBoost was marginally better on MAE (holdout 25.93 vs 25.98) but worse
+  on bits (0.1749 vs 0.1776), so it failed the bits guard. Current features add nothing reliable beyond Elo. Final model:
+  Elo baseline margin model, saved to `data_pipeline/data/layer2_model.joblib`
 
 ---
 
@@ -88,6 +92,7 @@ afl-analytics-hub/
 │   ├── load_matches.py         # raw_afltables_results -> teams/venues sync + clean matches
 │   ├── load_team_stats.py      # raw_afltables_player_stats -> team_match_stats (summed per team per match)
 │   ├── report_features.py      # Layer 2 feature report on 2010–2021 (coverage, corr with margin, corr after Elo)
+│   ├── train_layer2.py         # Layer 2: CV + single holdout + final refit -> data/layer2_model.joblib
 │   ├── run_elo_history.py      # Runs EloEngine over all results, prints sanity-check report
 │   ├── tune_elo.py             # Two-stage constant tuning (Stage A holdout gate, Stage B refit)
 │   ├── data/                   # Local outputs (gitignored): tuned_config.json
@@ -110,6 +115,7 @@ afl-analytics-hub/
 │   │   └── tuned.py            # TUNED_CONFIG (Tier-1 values) + provenance
 │   ├── db/                     # psycopg2 access: connection, reference sync, matches, team stats, Elo runs
 │   ├── features/               # Layer 2 features (pure): rest.py, form.py, build.py (build_features)
+│   ├── layer2/                 # margin models: splits, calibration, estimators, evaluate, artifact
 │   └── tests/                  # pytest: elo/ and features/ (pure), db/ (integration; needs TEST_DATABASE_URL)
 │
 ├── docs/superpowers/           # Design specs (specs/) and implementation plans (plans/)
@@ -180,6 +186,7 @@ python data_pipeline/load_matches.py           # raw -> clean matches (clears te
 python data_pipeline/load_team_stats.py        # player stats -> team_match_stats
 python data_pipeline/run_elo_history.py        # Elo runs "tier0"/"tuned" -> DB + report
 python data_pipeline/report_features.py        # Layer 2 feature report (2010–2021 only)
+python data_pipeline/train_layer2.py           # Layer 2 CV + holdout + final model (~20 s)
 python data_pipeline/tune_elo.py               # optional: re-run tuning (~1 min)
 ```
 Integration tests use `afl_analytics_test` and empty it on each run. After adding a migration, also run
@@ -254,8 +261,8 @@ main        — always working; merge a feature branch in once its tests pass
 ├── elo-venue-hga                    ✅ merged (Venue Adjustment Index)
 ├── elo-optimisation                 ✅ merged (two-stage constant tuning)
 ├── db-schema                        ✅ merged (Prisma schema, PostgreSQL pipeline)
-├── rolling-features                 ← CURRENT: team stats + Layer 2 features
-├── feature/xgboost-model
+├── rolling-features                 ✅ merged (team stats + Layer 2 features)
+├── xgboost-model                    ← CURRENT: Layer 2 model evaluation (verdict: keep Elo baseline)
 └── ...
 ```
 
@@ -297,10 +304,16 @@ Two-layer architecture:
 > `docs/superpowers/specs/2026-07-11-elo-engine-differentiation-design.md` for the full reasoning
 > and how these differ from the source models studied (below in Prior Art & Differentiation).
 
-**Layer 2 — XGBoost Regression** (not yet started)
-- Inputs: Elo differential, venue HGA, days rest differential, rolling EWMA stats
-- Target: `home_margin` (regression)
-- Win probability derived via calibrated sigmoid — not modelled separately
+**Layer 2 — Margin model** (`layer2/`, evaluated 2026-11-18)
+- Inputs: `build_features` (Elo/VAI, rest/bye, season-reset rolling form); target `target_home_margin`
+- Contenders: Elo baseline (linear on elo_diff + vai_diff), Ridge, XGBoost (xgboost-cpu 3.4.1)
+- Win probability: logistic of the predicted margin, `1 / (1 + exp(-margin / s))`, with `s` fitted on out-of-fold predictions
+- Protocol: Stage A Elo features; walk-forward CV (validate 2014–2019, 2021); pick by MAE with a bits guard; holdout scored once
+- **Result: KEEP ELO BASELINE.** CV MAE: baseline 28.87, Ridge 28.85, XGBoost 28.84 (XGBoost chose the simplest grid
+  point). Holdout 2022–2026: MAE 25.98 / 26.06 / 25.93, bits 0.1776 / 0.1696 / 0.1749. The Elo engine's own probability
+  scored best on bits (0.1805), better than any margin-logistic. Two follow-ups:
+  (1) features need information Elo doesn't have (form vs Elo expectation, team selection);
+  (2) consider taking the win probability from the Elo engine rather than from the margin-logistic
 - Temporal cross-validation only (never shuffle — must train on past, predict future)
 
 ### Tuned values (Tier-1) — `elo/tuned.py`
