@@ -32,6 +32,7 @@ def test_maps_fields_and_types():
     assert match.date == date(2023, 3, 16)
     assert match.venue == "S.C.G."
     assert match.match_id == "afltables-100"
+    assert match.round_code == "R1"
 
 
 def test_opening_round_shift_applies_from_2024_only():
